@@ -77,6 +77,30 @@
   .navitem.active{ background:var(--gold); color:#2E2117; font-weight:600; }
   .navitem.active svg{ opacity:1; }
   .sidebar-foot{ margin-top:auto; font-size:10.5px; color:#8B7A63; padding:10px 8px 0; }
+  .mobile-menu-btn{
+    display:none; align-items:center; gap:8px;
+    background:rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.18); color:#F1E7D6;
+    padding:9px 14px; border-radius:10px; font-family:'Inter'; font-weight:600; font-size:14px; cursor:pointer;
+  }
+  .mobile-menu-overlay{
+    display:none; position:fixed; inset:0; background:rgba(20,14,9,0.55); z-index:80;
+  }
+  .mobile-menu-overlay.open{ display:block; }
+  .mobile-menu-panel{
+    position:absolute; top:0; right:0; height:100%; width:82%; max-width:320px;
+    background:linear-gradient(180deg,#2E2117,#3A2A1C); color:#F1E7D6;
+    padding:20px 16px; overflow-y:auto; box-shadow:-8px 0 30px rgba(0,0,0,0.3);
+  }
+  .mobile-menu-head{ display:flex; justify-content:space-between; align-items:center; font-family:'Fraunces',serif; font-size:16px; margin-bottom:14px; color:#FBF5E9; }
+  .mobile-menu-head .modal-close{ color:#F1E7D6; }
+  .mobile-menu-item{
+    display:flex; align-items:center; gap:12px; width:100%; text-align:left;
+    background:none; border:none; color:#D9CBB4; font-family:'Inter'; font-size:15px; font-weight:600;
+    padding:14px 10px; border-radius:10px; cursor:pointer; border-bottom:1px solid rgba(255,255,255,0.06);
+  }
+  .mobile-menu-item svg{ width:19px; height:19px; flex:0 0 19px; opacity:.85; }
+  .mobile-menu-item.active{ background:var(--gold); color:#2E2117; }
+  .mobile-menu-item.active svg{ opacity:1; }
 
   /* Main */
   #main{ flex:1; min-width:0; padding:28px 34px 60px; max-width:1180px; }
@@ -180,11 +204,8 @@
     }
     .brand{ padding:0; flex:0 0 auto; }
     .brand-name{ display:none; }
-    nav.navlist{ flex-direction:row; gap:4px; overflow-x:auto; margin-top:0; flex:1; -webkit-overflow-scrolling:touch; }
-    nav.navlist::-webkit-scrollbar{ display:none; }
-    .navitem{ flex:0 0 auto; padding:8px 10px; white-space:nowrap; }
-    .navitem span{ display:none; }
-    .navitem svg{ width:19px; height:19px; }
+    nav.navlist{ display:none; }
+    .mobile-menu-btn{ display:flex; margin-left:auto; }
     .sidebar-foot{ display:none; }
     #main{ padding:16px 14px 50px; max-width:100%; }
     .pagehead{ margin-bottom:16px; }
@@ -225,8 +246,21 @@
       </div>
     </div>
     <nav class="navlist" id="navlist"></nav>
+    <button class="mobile-menu-btn" onclick="toggleMobileMenu()">
+      <span id="mobilePageTitle">Painel</span>
+      <svg viewBox="0 0 24 24" width="20" height="20"><path d="M4 7h16M4 12h16M4 17h16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+    </button>
     <div class="sidebar-foot">Gestão de clientes,<br>vendas &amp; financeiro</div>
   </aside>
+  <div id="mobileMenuOverlay" class="mobile-menu-overlay" onclick="if(event.target===this) closeMobileMenu()">
+    <div class="mobile-menu-panel">
+      <div class="mobile-menu-head">
+        <span>Menu</span>
+        <button class="modal-close" onclick="closeMobileMenu()">✕</button>
+      </div>
+      <div id="mobileMenuList"></div>
+    </div>
+  </div>
   <main id="main"></main>
 </div>
 <div id="modalRoot"></div>
@@ -450,6 +484,25 @@ function renderNav(){
       <svg viewBox="0 0 24 24">${ICONS[it.icon]}</svg>
       <span>${it.label}</span>
     </button>`).join('');
+  const list = document.getElementById('mobileMenuList');
+  if(list){
+    list.innerHTML = NAV_ITEMS.map(it=>`
+      <button class="mobile-menu-item ${ROUTE.tab===it.id?'active':''}" onclick="go('${it.id}'); closeMobileMenu();">
+        <svg viewBox="0 0 24 24">${ICONS[it.icon]}</svg>
+        <span>${it.label}</span>
+      </button>`).join('');
+  }
+  const title = document.getElementById('mobilePageTitle');
+  if(title){
+    const atual = NAV_ITEMS.find(it=>it.id===ROUTE.tab);
+    title.textContent = atual ? atual.label : 'Menu';
+  }
+}
+function toggleMobileMenu(){
+  document.getElementById('mobileMenuOverlay').classList.toggle('open');
+}
+function closeMobileMenu(){
+  document.getElementById('mobileMenuOverlay').classList.remove('open');
 }
 
 /* ============================= RENDER: DASHBOARD ============================= */
