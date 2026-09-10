@@ -7,8 +7,8 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="Jack Salgadinhos">
-<title>Jack Salgadinhos — Gestão</title>
+<meta name="apple-mobile-web-app-title" content="Gestão Empresarial">
+<title>Gestão Empresarial</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.4/chart.umd.min.js"></script>
@@ -228,7 +228,7 @@
 
   ::placeholder{ color:#B9AC94; }
   @media print{
-    #sidebar, .pagehead, .no-print{ display:none !important; }
+    #sidebar, .pagehead, .no-print, .mobile-menu-overlay, .mobile-menu-btn{ display:none !important; }
     #main{ padding:0; max-width:none; }
     body{ background:#fff; }
     #printarea{ display:block !important; }
@@ -240,9 +240,9 @@
 <div id="app">
   <aside id="sidebar">
     <div class="brand">
-      <div class="brand-mark">JS</div>
+      <div class="brand-mark">GE</div>
       <div>
-        <div class="brand-name">Jack<br>Salgadinhos</div>
+        <div class="brand-name">Gestão<br>Empresarial</div>
       </div>
     </div>
     <nav class="navlist" id="navlist"></nav>
@@ -278,8 +278,27 @@ const CATEGORIA_TIPO = {
 const FORMAS_PAGAMENTO = ["Dinheiro","PIX","Cartão de débito","Cartão de crédito","Transferência","Outro"];
 const CANAIS = ["Venda direta","WhatsApp","iFood","Delivery próprio","Festa","Evento","Revenda","Outro"];
 const STATUS_LIST = ["Pendente","Em produção","Pronto","Entregue","Pago","Cancelado"];
+const MOEDAS = {
+  BRL:{locale:'pt-BR', code:'BRL', nome:'Real (R$)'},
+  USD:{locale:'en-US', code:'USD', nome:'Dólar (US$)'},
+  EUR:{locale:'pt-PT', code:'EUR', nome:'Euro (€)'},
+  ARS:{locale:'es-AR', code:'ARS', nome:'Peso argentino ($)'},
+  MZN:{locale:'pt-PT', code:'MZN', nome:'Metical (MT)'},
+};
+const IDIOMAS = { pt:'Português', en:'English' };
+const APP_NAME = 'Gestão Empresarial';
+function moedaAtual(){ return (DATA.config && DATA.config.moeda) || 'BRL'; }
+function idiomaAtual(){ return (DATA.config && DATA.config.idioma) || 'pt'; }
+function nomeNegocio(){ return (DATA.config && DATA.config.nomeNegocio) || 'Minha Empresa'; }
+function iniciaisNegocio(){
+  const partes = nomeNegocio().trim().split(/\s+/).filter(Boolean);
+  if(partes.length===0) return 'GE';
+  if(partes.length===1) return partes[0].slice(0,2).toUpperCase();
+  return (partes[0][0]+partes[1][0]).toUpperCase();
+}
+function slug(s){ return String(s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]+/g,'-').replace(/(^-|-$)/g,'') || 'negocio'; }
 
-let DATA = { clientes: [], vendas: [], custos: [], proximoPedido: 1001 };
+let DATA = { clientes: [], vendas: [], custos: [], proximoPedido: 1001, config:{moeda:'BRL', idioma:'pt'} };
 let STORAGE_OK = true;
 const STORAGE_KEY = 'jackSalgadinhosData';
 
@@ -299,27 +318,33 @@ function ensureShape(){
   DATA.ingredientes = DATA.ingredientes || [];
   DATA.produtos = DATA.produtos || [];
   DATA.proximoPedido = DATA.proximoPedido || 1001;
+  DATA.config = DATA.config || {};
+  DATA.config.moeda = DATA.config.moeda || 'BRL';
+  DATA.config.idioma = DATA.config.idioma || 'pt';
+  if(DATA.config.nomeNegocio===undefined) DATA.config.nomeNegocio = 'Jack Salgadinhos';
+  DATA.ingredientes.forEach(i=>{ if(i.estoqueAtual===undefined) i.estoqueAtual=0; if(i.estoqueMinimo===undefined) i.estoqueMinimo=0; });
+  DATA.produtos.forEach(p=>{ if(p.estoqueAtual===undefined) p.estoqueAtual=0; if(p.estoqueMinimo===undefined) p.estoqueMinimo=0; });
 }
 const UNIDADES_INGREDIENTE = ['kg','g','L','ml','unidade'];
 function custoUnidadeBaseIngrediente(ing){
-  const qtd = Number(ing.quantidade)||0;
-  return qtd>0 ? (Number(ing.precoCompra)||0)/qtd : 0;
+  const qtd = parseNum(ing.quantidade)||0;
+  return qtd>0 ? (parseNum(ing.precoCompra)||0)/qtd : 0;
 }
 function custoIngredientesProduto(p){
   return (p.itens||[]).reduce((s,it)=>{
     const ing = DATA.ingredientes.find(i=>i.id===it.ingredienteId);
     if(!ing) return s;
-    return s + custoUnidadeBaseIngrediente(ing)*(Number(it.quantidade)||0);
+    return s + custoUnidadeBaseIngrediente(ing)*(parseNum(it.quantidade)||0);
   },0);
 }
 function custoUnitarioProduto(p){
-  const rend = Number(p.rendimento)||1;
+  const rend = parseNum(p.rendimento)||1;
   const base = custoIngredientesProduto(p)/rend;
-  return base + (Number(p.embalagem)||0) + (Number(p.maoDeObra)||0) + (Number(p.outros)||0);
+  return base + (parseNum(p.embalagem)||0) + (parseNum(p.maoDeObra)||0) + (parseNum(p.outros)||0);
 }
 function precoSugeridoProduto(p){
   const custo = custoUnitarioProduto(p);
-  const margem = Number(p.margem)||0;
+  const margem = parseNum(p.margem)||0;
   if(margem>=100) return custo*3;
   return custo/(1-margem/100);
 }
@@ -339,23 +364,33 @@ function save(){
 
 /* ============================= HELPERS ============================= */
 function brl(n){
-  n = Number(n)||0;
-  return n.toLocaleString('pt-BR',{style:'currency',currency:'BRL'});
+  n = parseNum(n);
+  const m = MOEDAS[moedaAtual()] || MOEDAS.BRL;
+  return n.toLocaleString(m.locale, {style:'currency', currency:m.code});
+}
+function parseNum(v){
+  if(v===undefined || v===null || v==='') return 0;
+  if(typeof v === 'number') return v;
+  let s = String(v).trim();
+  if(s==='') return 0;
+  if(s.indexOf(',')>-1){ s = s.replace(/\./g,'').replace(',', '.'); }
+  const n = parseFloat(s);
+  return isNaN(n) ? 0 : n;
 }
 function fmtDate(iso){
   if(!iso) return '—';
   const [y,m,d] = iso.split('-');
-  return `${d}/${m}/${y}`;
+  return idiomaAtual()==='en' ? `${m}/${d}/${y}` : `${d}/${m}/${y}`;
 }
 function todayISO(){ return new Date().toISOString().slice(0,10); }
 function monthKey(iso){ return iso ? iso.slice(0,7) : ''; }
 function esc(s){ return (s===undefined||s===null) ? '' : String(s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
-function vendaSubtotal(v){ return (v.itens||[]).reduce((s,it)=>s+ (Number(it.qtd)||0)*(Number(it.preco)||0),0); }
-function vendaCusto(v){ return (v.itens||[]).reduce((s,it)=>s+ (Number(it.qtd)||0)*(Number(it.custo)||0),0); }
-function vendaTotal(v){ return vendaSubtotal(v) - (Number(v.desconto)||0) + (Number(v.taxa)||0); }
-function vendaLucro(v){ return vendaTotal(v) - vendaCusto(v) - (Number(v.taxa)||0); }
-function vendaQtdItens(v){ return (v.itens||[]).reduce((s,it)=>s+(Number(it.qtd)||0),0); }
+function vendaSubtotal(v){ return (v.itens||[]).reduce((s,it)=>s+ (parseNum(it.qtd)||0)*(parseNum(it.preco)||0),0); }
+function vendaCusto(v){ return (v.itens||[]).reduce((s,it)=>s+ (parseNum(it.qtd)||0)*(parseNum(it.custo)||0),0); }
+function vendaTotal(v){ return vendaSubtotal(v) - (parseNum(v.desconto)||0) + (parseNum(v.taxa)||0); }
+function vendaLucro(v){ return vendaTotal(v) - vendaCusto(v) - (parseNum(v.taxa)||0); }
+function vendaQtdItens(v){ return (v.itens||[]).reduce((s,it)=>s+(parseNum(it.qtd)||0),0); }
 
 function inRange(iso, from, to){ return iso>=from && iso<=to; }
 function periodRange(period, customFrom, customTo){
@@ -390,11 +425,11 @@ function custosNoPeriodo(period, customFrom, customTo){
 
 function resumoFinanceiro(vendasArr, custosArr){
   const faturamento = vendasArr.reduce((s,v)=>s+vendaSubtotal(v),0);
-  const descontos = vendasArr.reduce((s,v)=>s+(Number(v.desconto)||0),0);
-  const taxas = vendasArr.reduce((s,v)=>s+(Number(v.taxa)||0),0);
+  const descontos = vendasArr.reduce((s,v)=>s+(parseNum(v.desconto)||0),0);
+  const taxas = vendasArr.reduce((s,v)=>s+(parseNum(v.taxa)||0),0);
   const custoProducao = vendasArr.reduce((s,v)=>s+vendaCusto(v),0);
-  const custosVar = custosArr.filter(c=>CATEGORIA_TIPO[c.categoria]==='variavel').reduce((s,c)=>s+(Number(c.valor)||0),0);
-  const custosFixos = custosArr.filter(c=>CATEGORIA_TIPO[c.categoria]==='fixo').reduce((s,c)=>s+(Number(c.valor)||0),0);
+  const custosVar = custosArr.filter(c=>CATEGORIA_TIPO[c.categoria]==='variavel').reduce((s,c)=>s+(parseNum(c.valor)||0),0);
+  const custosFixos = custosArr.filter(c=>CATEGORIA_TIPO[c.categoria]==='fixo').reduce((s,c)=>s+(parseNum(c.valor)||0),0);
   const custoTotal = custoProducao + custosVar + custosFixos + taxas;
   const receitaVendas = faturamento - descontos;
   const lucro = receitaVendas - custoProducao - taxas - custosVar - custosFixos;
@@ -413,7 +448,7 @@ function clienteStats(clienteId){
   const ultima = vs[vs.length-1]?.data;
   const lucroGerado = vs.reduce((s,v)=>s+vendaLucro(v),0);
   const produtoCount = {};
-  vs.forEach(v=> (v.itens||[]).forEach(it=>{ produtoCount[it.produto]=(produtoCount[it.produto]||0)+(Number(it.qtd)||0); }));
+  vs.forEach(v=> (v.itens||[]).forEach(it=>{ produtoCount[it.produto]=(produtoCount[it.produto]||0)+(parseNum(it.qtd)||0); }));
   const produtosMaisComprados = Object.entries(produtoCount).sort((a,b)=>b[1]-a[1]).slice(0,3);
   return {vs,totalCompras,totalGasto,ticketMedio,primeira,ultima,lucroGerado,produtosMaisComprados};
 }
@@ -424,9 +459,9 @@ function rankingProdutos(vendasArr){
     (v.itens||[]).forEach(it=>{
       const key = it.produto || '—';
       if(!map[key]) map[key]={produto:key, qtd:0, faturamento:0, custo:0};
-      map[key].qtd += Number(it.qtd)||0;
-      map[key].faturamento += (Number(it.qtd)||0)*(Number(it.preco)||0);
-      map[key].custo += (Number(it.qtd)||0)*(Number(it.custo)||0);
+      map[key].qtd += parseNum(it.qtd)||0;
+      map[key].faturamento += (parseNum(it.qtd)||0)*(parseNum(it.preco)||0);
+      map[key].custo += (parseNum(it.qtd)||0)*(parseNum(it.custo)||0);
     });
   });
   return Object.values(map).map(p=>({...p, lucro:p.faturamento-p.custo, margem: p.faturamento>0?((p.faturamento-p.custo)/p.faturamento*100):0}));
@@ -453,6 +488,7 @@ const NAV_ITEMS = [
   {id:'dashboard', label:'Painel', icon:'grid'},
   {id:'clientes', label:'Clientes', icon:'user'},
   {id:'precificacao', label:'Precificação', icon:'tag'},
+  {id:'estoque', label:'Estoque', icon:'box'},
   {id:'novaVenda', label:'Nova venda', icon:'plus'},
   {id:'vendas', label:'Pedidos', icon:'list'},
   {id:'custos', label:'Custos do mês', icon:'wallet'},
@@ -460,6 +496,7 @@ const NAV_ITEMS = [
   {id:'rankings', label:'Rankings', icon:'trophy'},
   {id:'graficos', label:'Gráficos', icon:'trend'},
   {id:'backup', label:'Backup', icon:'cloud'},
+  {id:'config', label:'Configurações', icon:'gear'},
 ];
 const ICONS = {
   grid:'<path d="M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM14 14h7v7h-7z" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linejoin="round"/>',
@@ -472,6 +509,8 @@ const ICONS = {
   trend:'<path d="M3 17l6-6 4 4 8-8M15 7h6v6" stroke="currentColor" stroke-width="1.7" fill="none" stroke-linecap="round" stroke-linejoin="round"/>',
   cloud:'<path d="M7 18a4 4 0 01-1-7.9A5 5 0 0116 8a4.5 4.5 0 011 8.9M12 12v7m0-7l-3 3m3-3l3 3" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/>',
   tag:'<path d="M3 11l8-8h6a2 2 0 012 2v6l-8 8a2 2 0 01-2.8 0l-5.2-5.2a2 2 0 010-2.8z" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linejoin="round"/><circle cx="14.5" cy="9.5" r="1.4" fill="currentColor"/>',
+  box:'<path d="M3 8l9-5 9 5-9 5-9-5zM3 8v8l9 5 9-5V8M12 13v8" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linejoin="round" stroke-linecap="round"/>',
+  gear:'<path d="M12 15a3 3 0 100-6 3 3 0 000 6z" stroke="currentColor" stroke-width="1.6" fill="none"/><path d="M19.4 13a7.6 7.6 0 000-2l2-1.5-2-3.4-2.3.9a7.5 7.5 0 00-1.7-1L15 3.5h-6l-.4 2.5a7.5 7.5 0 00-1.7 1l-2.3-.9-2 3.4L4.6 11a7.6 7.6 0 000 2l-2 1.5 2 3.4 2.3-.9c.5.4 1.1.75 1.7 1l.4 2.5h6l.4-2.5a7.5 7.5 0 001.7-1l2.3.9 2-3.4-2-1.5z" stroke="currentColor" stroke-width="1.3" fill="none" stroke-linejoin="round"/>',
 };
 
 function go(tab, params){ ROUTE = {tab, params: params||{}}; render(); window.scrollTo(0,0); }
@@ -521,7 +560,7 @@ function renderDashboard(){
   <div class="section-title"><span>Hoje</span></div>
   <div class="grid cols-4">
     <div class="card"><div class="stat-label">Pedidos</div><div class="stat-value">${hoje.pedidos}</div></div>
-    <div class="card"><div class="stat-label">Salgados vendidos</div><div class="stat-value">${hoje.unidades}</div></div>
+    <div class="card"><div class="stat-label">Produtos vendidos</div><div class="stat-value">${hoje.unidades}</div></div>
     <div class="card"><div class="stat-label">Faturamento</div><div class="stat-value">${brl(hoje.receitaVendas)}</div></div>
     <div class="card"><div class="stat-label">Lucro</div><div class="stat-value ${hoje.lucro>=0?'pos':'neg'}">${brl(hoje.lucro)}</div></div>
   </div>
@@ -529,7 +568,7 @@ function renderDashboard(){
   <div class="section-title"><span>Este mês</span></div>
   <div class="grid cols-4">
     <div class="card"><div class="stat-label">Pedidos</div><div class="stat-value">${mes.pedidos}</div></div>
-    <div class="card"><div class="stat-label">Salgados vendidos</div><div class="stat-value">${mes.unidades}</div></div>
+    <div class="card"><div class="stat-label">Produtos vendidos</div><div class="stat-value">${mes.unidades}</div></div>
     <div class="card"><div class="stat-label">Faturamento</div><div class="stat-value">${brl(mes.receitaVendas)}</div></div>
     <div class="card"><div class="stat-label">Custos</div><div class="stat-value">${brl(mes.custoTotal)}</div></div>
   </div>
@@ -540,7 +579,7 @@ function renderDashboard(){
 
   <div class="grid cols-2" style="margin-top:26px; align-items:start;">
     <div class="card">
-      <div class="stat-label" style="margin-bottom:10px;">Mais vendidos este mês</div>
+      <div class="stat-label" style="margin-bottom:10px;">Produtos mais vendidos</div>
       ${rankMes.length? `<table><tbody>${rankMes.map((p,i)=>`<tr><td>${i+1}. ${esc(p.produto)}</td><td class="num">${p.qtd} un.</td></tr>`).join('')}</tbody></table>`
         : `<div class="stat-sub">Nenhuma venda registrada este mês ainda.</div>`}
     </div>
@@ -560,7 +599,10 @@ function renderClientes(){
   return `
   <div class="pagehead">
     <div><h1>Clientes</h1><p>${DATA.clientes.length} cliente(s) cadastrado(s).</p></div>
-    <button class="btn gold" onclick="openClienteModal()">+ Novo cliente</button>
+    <div style="display:flex; gap:8px;">
+      <button class="btn ghost" onclick="imprimirListaClientes()">Imprimir lista</button>
+      <button class="btn gold" onclick="openClienteModal()">+ Novo cliente</button>
+    </div>
   </div>
   <input class="field" style="max-width:280px; padding:9px 12px; border-radius:9px; border:1px solid var(--line); margin-bottom:16px;" placeholder="Buscar por nome..." value="${esc(ROUTE.params.busca||'')}" oninput="ROUTE.params.busca=this.value; renderMain();">
   ${lista.length===0 ? `<div class="card empty"><div class="display">Nenhum cliente ainda</div>Cadastre o primeiro cliente para começar a acompanhar compras e histórico.</div>` : `
@@ -660,11 +702,11 @@ function openClienteModal(id){
       <form id="clienteForm">
         <div class="field"><label>Nome *</label><input required name="nome" value="${esc(c?.nome||'')}"></div>
         <div class="rowline">
-          <div class="field"><label>Telefone/WhatsApp</label><input name="telefone" value="${esc(c?.telefone||'')}"></div>
-          <div class="field"><label>E-mail (opcional)</label><input name="email" value="${esc(c?.email||'')}"></div>
+          <div class="field"><label>Telefone/WhatsApp</label><input name="telefone" value="${esc(maskTelefone(c?.telefone||''))}" inputmode="tel" placeholder="(11) 91234-5678" oninput="aplicarMascaraTelefone(this)"></div>
+          <div class="field"><label>E-mail (opcional)</label><input name="email" value="${esc(c?.email||'')}" list="emailSuggestions" oninput="atualizarSugestoesEmail(this.value)"><datalist id="emailSuggestions"></datalist></div>
         </div>
         <div class="field"><label>Endereço (opcional)</label><input name="endereco" value="${esc(c?.endereco||'')}"></div>
-        <div class="field"><label>Observações</label><textarea name="obs" placeholder="Ex: Prefere coxinha sem catupiry, entrega só depois das 18h...">${esc(c?.obs||'')}</textarea></div>
+        <div class="field"><label>Observações</label><textarea name="obs" placeholder="Ex: Cliente atacadista, prefere entrega após as 18h, pedir confirmação antes de produzir...">${esc(c?.obs||'')}</textarea></div>
         <div style="display:flex; justify-content:space-between; margin-top:18px;">
           <div>${c? `<button type="button" class="btn danger sm" onclick="excluirCliente('${c.id}')">Excluir cliente</button>`:''}</div>
           <div style="display:flex; gap:8px;">
@@ -698,7 +740,7 @@ function renderPrecificacao(){
   const sub = ROUTE.params.sub || 'produtos';
   return `
   <div class="pagehead">
-    <div><h1>Precificação</h1><p>Custo dos ingredientes, custo de produção e preço sugerido para cada salgado.</p></div>
+    <div><h1>Precificação</h1><p>Custo dos ingredientes, custo de produção e preço sugerido para cada produto.</p></div>
     <button class="btn gold" onclick="${sub==='ingredientes' ? 'openIngredienteModal()' : 'openProdutoModal()'}">+ ${sub==='ingredientes'?'Novo ingrediente':'Novo produto'}</button>
   </div>
   <div class="tabs">
@@ -743,7 +785,7 @@ function renderProdutosTab(){
           <td>${esc(p.nome)}</td>
           <td class="num">${p.rendimento} un.</td>
           <td class="num">${brl(custo)}</td>
-          <td class="num">${Number(p.margem)||0}%</td>
+          <td class="num">${parseNum(p.margem)||0}%</td>
           <td class="num">${brl(sugerido)}</td>
           <td class="num" style="font-weight:700;">${brl(p.precoPraticado!==undefined && p.precoPraticado!==null && p.precoPraticado!=='' ? p.precoPraticado : sugerido)}</td>
           <td style="text-align:right;"><button class="btn ghost sm" onclick="openProdutoModal('${p.id}')">Editar</button></td>
@@ -765,9 +807,9 @@ function openIngredienteModal(id){
         <div class="field"><label>Nome *</label><input required name="nome" value="${esc(ing?.nome||'')}" placeholder="Ex: Farinha de trigo"></div>
         <p class="stat-sub" style="margin:-6px 0 12px;">Informe o que você comprou: quantidade e o preço total pago. O custo por unidade é calculado automaticamente.</p>
         <div class="rowline3">
-          <div class="field"><label>Quantidade comprada</label><input required type="number" step="0.001" min="0" name="quantidade" value="${ing?.quantidade??''}"></div>
+          <div class="field"><label>Quantidade comprada</label><input required type="text" inputmode="decimal" step="0.001" min="0" name="quantidade" value="${ing?.quantidade??''}"></div>
           <div class="field"><label>Unidade</label><select name="unidade">${UNIDADES_INGREDIENTE.map(u=>`<option ${ing?.unidade===u?'selected':''}>${u}</option>`).join('')}</select></div>
-          <div class="field"><label>Preço pago (R$)</label><input required type="number" step="0.01" min="0" name="precoCompra" value="${ing?.precoCompra??''}"></div>
+          <div class="field"><label>Preço pago (R$)</label><input required type="text" inputmode="decimal" step="0.01" min="0" name="precoCompra" value="${ing?.precoCompra??''}"></div>
         </div>
         <div style="display:flex; justify-content:space-between; margin-top:18px;">
           <div>${ing? `<button type="button" class="btn danger sm" onclick="excluirIngrediente('${ing.id}')">Excluir</button>`:''}</div>
@@ -782,7 +824,7 @@ function openIngredienteModal(id){
   document.getElementById('ingForm').addEventListener('submit',(e)=>{
     e.preventDefault();
     const f = new FormData(e.target);
-    const obj = {nome:f.get('nome').trim(), quantidade:Number(f.get('quantidade')), unidade:f.get('unidade'), precoCompra:Number(f.get('precoCompra'))};
+    const obj = {nome:f.get('nome').trim(), quantidade:parseNum(f.get('quantidade')), unidade:f.get('unidade'), precoCompra:parseNum(f.get('precoCompra'))};
     if(!obj.nome) return;
     if(ing){ Object.assign(ing, obj); } else { DATA.ingredientes.push({id:uid('ing'), ...obj}); }
     save(); closeModal(); go('precificacao',{sub:'ingredientes'});
@@ -811,8 +853,8 @@ function renderProdutoModal(id){
     <div class="modal" style="max-width:660px;">
       <div class="modal-head"><h2 style="margin:0;">${id?'Editar produto':'Novo produto'}</h2><button class="modal-close" onclick="closeModal()">✕</button></div>
       <div class="rowline">
-        <div class="field"><label>Nome do produto *</label><input value="${esc(p.nome)}" oninput="produtoDraft.nome=this.value;" placeholder="Ex: Coxinha de frango"></div>
-        <div class="field"><label>Rendimento (quantas unidades a receita rende)</label><input type="number" min="1" value="${p.rendimento}" oninput="produtoDraft.rendimento=this.value; renderProdutoModal('${id||''}');"></div>
+        <div class="field"><label>Nome do produto *</label><input value="${esc(p.nome)}" oninput="produtoDraft.nome=this.value;" placeholder="Nome do produto"></div>
+        <div class="field"><label>Rendimento (quantas unidades a receita rende)</label><input type="text" inputmode="decimal" min="1" value="${p.rendimento}" oninput="produtoDraft.rendimento=this.value; renderProdutoModal('${id||''}');"></div>
       </div>
       <label style="display:block; font-size:12.5px; font-weight:600; color:var(--umber-soft); margin:10px 0 6px;">Ingredientes usados na receita (na mesma unidade cadastrada em Ingredientes)</label>
       ${DATA.ingredientes.length===0 ? `<p class="stat-sub">Cadastre ingredientes primeiro na aba Ingredientes.</p>` : `
@@ -823,23 +865,23 @@ function renderProdutoModal(id){
           <select onchange="produtoDraft.itens[${i}].ingredienteId=this.value; renderProdutoModal('${id||''}');">
             ${DATA.ingredientes.map(ig=>`<option value="${ig.id}" ${it.ingredienteId===ig.id?'selected':''}>${esc(ig.nome)} (${ig.unidade})</option>`).join('')}
           </select>
-          <input type="number" step="0.001" min="0" value="${it.quantidade}" oninput="produtoDraft.itens[${i}].quantidade=this.value; renderProdutoModal('${id||''}');" placeholder="${ing?ing.unidade:''}">
+          <input type="text" inputmode="decimal" step="0.001" min="0" value="${it.quantidade}" oninput="produtoDraft.itens[${i}].quantidade=this.value; renderProdutoModal('${id||''}');" placeholder="${ing?ing.unidade:''}">
           <button class="iconbtn" onclick="produtoDraft.itens.splice(${i},1); renderProdutoModal('${id||''}');">✕</button>
         </div>`;
       }).join('')}
       <button class="btn ghost sm" onclick="produtoDraft.itens.push({ingredienteId:DATA.ingredientes[0].id, quantidade:0}); renderProdutoModal('${id||''}');">+ Adicionar ingrediente</button>
       `}
       <div class="rowline3" style="margin-top:16px;">
-        <div class="field"><label>Embalagem (R$/un.)</label><input type="number" step="0.01" min="0" value="${p.embalagem}" oninput="produtoDraft.embalagem=this.value; renderProdutoModal('${id||''}');"></div>
-        <div class="field"><label>Mão de obra (R$/un.)</label><input type="number" step="0.01" min="0" value="${p.maoDeObra}" oninput="produtoDraft.maoDeObra=this.value; renderProdutoModal('${id||''}');"></div>
-        <div class="field"><label>Outros custos (R$/un.)</label><input type="number" step="0.01" min="0" value="${p.outros}" oninput="produtoDraft.outros=this.value; renderProdutoModal('${id||''}');"></div>
+        <div class="field"><label>Embalagem (R$/un.)</label><input type="text" inputmode="decimal" step="0.01" min="0" value="${p.embalagem}" oninput="produtoDraft.embalagem=this.value; renderProdutoModal('${id||''}');"></div>
+        <div class="field"><label>Mão de obra (R$/un.)</label><input type="text" inputmode="decimal" step="0.01" min="0" value="${p.maoDeObra}" oninput="produtoDraft.maoDeObra=this.value; renderProdutoModal('${id||''}');"></div>
+        <div class="field"><label>Outros custos (R$/un.)</label><input type="text" inputmode="decimal" step="0.01" min="0" value="${p.outros}" oninput="produtoDraft.outros=this.value; renderProdutoModal('${id||''}');"></div>
       </div>
       <div class="rowline">
-        <div class="field"><label>Margem de lucro desejada (%)</label><input type="number" step="1" min="0" max="95" value="${p.margem}" oninput="produtoDraft.margem=this.value; renderProdutoModal('${id||''}');"></div>
-        <div class="field"><label>Preço praticado (R$) — deixe em branco para usar o sugerido</label><input type="number" step="0.01" min="0" value="${p.precoPraticado}" oninput="produtoDraft.precoPraticado=this.value;"></div>
+        <div class="field"><label>Margem de lucro desejada (%)</label><input type="text" inputmode="decimal" step="1" min="0" max="95" value="${p.margem}" oninput="produtoDraft.margem=this.value; renderProdutoModal('${id||''}');"></div>
+        <div class="field"><label>Preço praticado (R$) — deixe em branco para usar o sugerido</label><input type="text" inputmode="decimal" step="0.01" min="0" value="${p.precoPraticado}" oninput="produtoDraft.precoPraticado=this.value;"></div>
       </div>
       <div class="card" style="background:var(--sage-soft); border:none;">
-        <div class="totline"><span>Custo dos ingredientes (por unidade)</span><span class="num">${brl(custoIngredientesProduto(p)/(Number(p.rendimento)||1))}</span></div>
+        <div class="totline"><span>Custo dos ingredientes (por unidade)</span><span class="num">${brl(custoIngredientesProduto(p)/(parseNum(p.rendimento)||1))}</span></div>
         <div class="totline grand"><span>Custo unitário total</span><span class="num">${brl(custo)}</span></div>
         <div class="totline"><span style="font-weight:700;">Preço sugerido</span><span class="num" style="font-weight:700;">${brl(sugerido)}</span></div>
       </div>
@@ -868,6 +910,168 @@ function excluirProduto(id){
   if(!confirm('Excluir este produto da precificação?')) return;
   DATA.produtos = DATA.produtos.filter(p=>p.id!==id);
   save(); produtoDraft=null; closeModal(); go('precificacao',{sub:'produtos'});
+}
+
+/* ============================= ESTOQUE ============================= */
+function renderEstoque(){
+  const sub = ROUTE.params.sub || 'produtos';
+  const prodBaixo = DATA.produtos.filter(p=>Number(p.estoqueAtual)<Number(p.estoqueMinimo));
+  const ingBaixo = DATA.ingredientes.filter(i=>Number(i.estoqueAtual)<Number(i.estoqueMinimo));
+  return `
+  <div class="pagehead">
+    <div><h1>Estoque</h1><p>Controle de produtos prontos e matéria-prima.</p></div>
+    <div style="display:flex; gap:8px; flex-wrap:wrap;">
+      <button class="btn ghost" onclick="imprimirEstoque()">Imprimir posição</button>
+      <button class="btn ghost" onclick="imprimirFichaContagem()">Imprimir ficha de contagem</button>
+      <button class="btn gold" onclick="openProducaoModal()">+ Registrar produção</button>
+    </div>
+  </div>
+  ${(prodBaixo.length+ingBaixo.length)>0 ? `
+  <div class="card" style="background:var(--brick-soft); border:none; margin-bottom:20px;">
+    <div class="stat-label" style="color:var(--brick);">Itens abaixo do estoque mínimo — o que comprar/produzir</div>
+    <table style="margin-top:8px;"><tbody>
+      ${prodBaixo.map(p=>`<tr><td>${esc(p.nome)} (produto)</td><td class="num">${p.estoqueAtual} / mín. ${p.estoqueMinimo}</td></tr>`).join('')}
+      ${ingBaixo.map(i=>`<tr><td>${esc(i.nome)} (matéria-prima)</td><td class="num">${i.estoqueAtual} / mín. ${i.estoqueMinimo} ${i.unidade}</td></tr>`).join('')}
+    </tbody></table>
+  </div>` : ''}
+  <div class="tabs">
+    <button class="tabbtn ${sub==='produtos'?'active':''}" onclick="go('estoque',{sub:'produtos'})">Produtos prontos</button>
+    <button class="tabbtn ${sub==='materiaPrima'?'active':''}" onclick="go('estoque',{sub:'materiaPrima'})">Matéria-prima</button>
+  </div>
+  ${sub==='materiaPrima' ? renderEstoqueIngredientes() : renderEstoqueProdutos()}
+  `;
+}
+function renderEstoqueProdutos(){
+  if(DATA.produtos.length===0) return `<div class="card empty">Cadastre produtos em Precificação para controlar o estoque deles.</div>`;
+  return `<div class="card" style="padding:0;"><table>
+    <thead><tr><th>Produto</th><th class="num">Estoque atual</th><th class="num">Mínimo desejado</th><th></th><th></th></tr></thead>
+    <tbody>${DATA.produtos.map(p=>`<tr>
+      <td>${esc(p.nome)}</td>
+      <td class="num" style="font-weight:700; ${Number(p.estoqueAtual)<Number(p.estoqueMinimo)?'color:var(--brick)':''}">${p.estoqueAtual} un.</td>
+      <td class="num"><input type="text" inputmode="decimal" style="width:70px; text-align:right; padding:5px 7px; border-radius:7px; border:1px solid var(--line);" value="${p.estoqueMinimo}" onchange="p.estoqueMinimo=parseNum(this.value); save();"></td>
+      <td><button class="btn ghost sm" onclick="ajustarEstoqueManual('produto','${p.id}')">Ajustar</button></td>
+      <td><button class="btn ghost sm" onclick="openProducaoModal('${p.id}')">Produzir</button></td>
+    </tr>`).join('')}</tbody>
+  </table></div>`;
+}
+function renderEstoqueIngredientes(){
+  if(DATA.ingredientes.length===0) return `<div class="card empty">Cadastre ingredientes em Precificação para controlar o estoque deles.</div>`;
+  return `<div class="card" style="padding:0;"><table>
+    <thead><tr><th>Ingrediente</th><th class="num">Estoque atual</th><th class="num">Mínimo desejado</th><th></th></tr></thead>
+    <tbody>${DATA.ingredientes.map(i=>`<tr>
+      <td>${esc(i.nome)}</td>
+      <td class="num" style="font-weight:700; ${Number(i.estoqueAtual)<Number(i.estoqueMinimo)?'color:var(--brick)':''}">${i.estoqueAtual} ${i.unidade}</td>
+      <td class="num"><input type="text" inputmode="decimal" style="width:70px; text-align:right; padding:5px 7px; border-radius:7px; border:1px solid var(--line);" value="${i.estoqueMinimo}" onchange="i.estoqueMinimo=parseNum(this.value); save();"></td>
+      <td><button class="btn ghost sm" onclick="ajustarEstoqueManual('ingrediente','${i.id}')">Ajustar</button></td>
+    </tr>`).join('')}</tbody>
+  </table></div>`;
+}
+function ajustarEstoqueManual(tipo, id){
+  const item = tipo==='produto' ? DATA.produtos.find(x=>x.id===id) : DATA.ingredientes.find(x=>x.id===id);
+  if(!item) return;
+  const unidade = tipo==='produto' ? 'un.' : item.unidade;
+  const root = document.getElementById('modalRoot');
+  root.innerHTML = `
+  <div class="modal-backdrop" onclick="if(event.target===this) closeModal()">
+    <div class="modal">
+      <div class="modal-head"><h2 style="margin:0;">Ajustar estoque — ${esc(item.nome)}</h2><button class="modal-close" onclick="closeModal()">✕</button></div>
+      <p class="stat-sub">Estoque atual: <b>${item.estoqueAtual} ${unidade}</b>. Informe quanto entrou (+) ou saiu (−).</p>
+      <div class="field"><label>Quantidade (use negativo para saída, ex: -5)</label><input id="ajusteQtd" type="text" inputmode="decimal" placeholder="Ex: 10 ou -5"></div>
+      <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:16px;">
+        <button class="btn ghost" onclick="closeModal()">Cancelar</button>
+        <button class="btn gold" onclick="confirmarAjusteEstoque('${tipo}','${id}')">Aplicar</button>
+      </div>
+    </div>
+  </div>`;
+}
+function confirmarAjusteEstoque(tipo, id){
+  const item = tipo==='produto' ? DATA.produtos.find(x=>x.id===id) : DATA.ingredientes.find(x=>x.id===id);
+  const delta = parseNum(document.getElementById('ajusteQtd').value);
+  item.estoqueAtual = (Number(item.estoqueAtual)||0) + delta;
+  save(); closeModal(); renderMain();
+}
+let producaoDraft = null;
+function openProducaoModal(produtoId){
+  if(DATA.produtos.length===0){ alert('Cadastre um produto em Precificação primeiro.'); return; }
+  producaoDraft = { produtoId: produtoId || DATA.produtos[0].id, quantidade: 1 };
+  renderProducaoModal();
+}
+function renderProducaoModal(){
+  const d = producaoDraft;
+  const p = DATA.produtos.find(x=>x.id===d.produtoId);
+  const faltando = (p?.itens||[]).map(it=>{
+    const ing = DATA.ingredientes.find(i=>i.id===it.ingredienteId);
+    if(!ing) return null;
+    const necessario = parseNum(it.quantidade) * (parseNum(d.quantidade)/(parseNum(p.rendimento)||1));
+    return {nome:ing.nome, necessario, disponivel:Number(ing.estoqueAtual)||0, unidade:ing.unidade, falta: necessario > (Number(ing.estoqueAtual)||0)};
+  }).filter(Boolean);
+  const root = document.getElementById('modalRoot');
+  root.innerHTML = `
+  <div class="modal-backdrop" onclick="if(event.target===this) closeModal()">
+    <div class="modal">
+      <div class="modal-head"><h2 style="margin:0;">Registrar produção</h2><button class="modal-close" onclick="closeModal()">✕</button></div>
+      <div class="rowline">
+        <div class="field"><label>Produto</label><select onchange="producaoDraft.produtoId=this.value; renderProducaoModal();">
+          ${DATA.produtos.map(pr=>`<option value="${pr.id}" ${d.produtoId===pr.id?'selected':''}>${esc(pr.nome)}</option>`).join('')}
+        </select></div>
+        <div class="field"><label>Quantidade produzida (un.)</label><input type="text" inputmode="decimal" value="${d.quantidade}" oninput="producaoDraft.quantidade=this.value; renderProducaoModal();"></div>
+      </div>
+      ${faltando.length ? `
+      <label style="display:block; font-size:12.5px; font-weight:600; color:var(--umber-soft); margin:10px 0 6px;">Consumo de matéria-prima estimado</label>
+      <table><tbody>
+        ${faltando.map(f=>`<tr><td>${esc(f.nome)}</td><td class="num">${f.necessario.toFixed(2)} ${f.unidade}</td><td class="num" style="color:${f.falta?'var(--brick)':'var(--sage)'}">${f.falta?'estoque insuficiente':'ok'} (${f.disponivel} ${f.unidade} em estoque)</td></tr>`).join('')}
+      </tbody></table>` : ''}
+      <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:18px;">
+        <button class="btn ghost" onclick="producaoDraft=null; closeModal();">Cancelar</button>
+        <button class="btn gold" onclick="confirmarProducao()">Confirmar produção</button>
+      </div>
+    </div>
+  </div>`;
+}
+function confirmarProducao(){
+  const d = producaoDraft;
+  const p = DATA.produtos.find(x=>x.id===d.produtoId);
+  const qtd = parseNum(d.quantidade);
+  if(!p || qtd<=0){ alert('Informe uma quantidade válida.'); return; }
+  (p.itens||[]).forEach(it=>{
+    const ing = DATA.ingredientes.find(i=>i.id===it.ingredienteId);
+    if(ing){
+      const consumo = parseNum(it.quantidade) * (qtd/(parseNum(p.rendimento)||1));
+      ing.estoqueAtual = (Number(ing.estoqueAtual)||0) - consumo;
+    }
+  });
+  p.estoqueAtual = (Number(p.estoqueAtual)||0) + qtd;
+  save(); producaoDraft=null; closeModal(); go('estoque',{sub:'produtos'});
+}
+function imprimirFichaContagem(){
+  const html = `
+    <div style="font-family:'Inter',sans-serif; color:#1c140c; padding:10px;">
+      <h2 style="font-family:'Fraunces',serif; margin-bottom:2px;">${esc(nomeNegocio().toUpperCase())} — Ficha de contagem de estoque</h2>
+      <p style="font-size:12.5px; color:#6b5c4a;">Data da contagem: ____/____/______ &nbsp;&nbsp; Responsável: _______________________</p>
+      <h3 style="margin:18px 0 6px;">Produtos prontos</h3>
+      <table style="width:100%; border-collapse:collapse; font-size:13px;">
+        <thead><tr>
+          <th style="text-align:left; border-bottom:1px solid #333; padding:6px;">Produto</th>
+          <th style="text-align:right; border-bottom:1px solid #333; padding:6px;">Sistema</th>
+          <th style="text-align:right; border-bottom:1px solid #333; padding:6px;">Contagem manual</th>
+          <th style="text-align:right; border-bottom:1px solid #333; padding:6px;">Diferença</th>
+        </tr></thead>
+        <tbody>${DATA.produtos.map(p=>`<tr><td style="padding:8px 6px; border-bottom:1px solid #ddd;">${esc(p.nome)}</td><td style="text-align:right; padding:8px 6px; border-bottom:1px solid #ddd;">${p.estoqueAtual}</td><td style="border-bottom:1px solid #ddd;">&nbsp;</td><td style="border-bottom:1px solid #ddd;">&nbsp;</td></tr>`).join('')}</tbody>
+      </table>
+      <h3 style="margin:22px 0 6px;">Matéria-prima</h3>
+      <table style="width:100%; border-collapse:collapse; font-size:13px;">
+        <thead><tr>
+          <th style="text-align:left; border-bottom:1px solid #333; padding:6px;">Ingrediente</th>
+          <th style="text-align:right; border-bottom:1px solid #333; padding:6px;">Sistema</th>
+          <th style="text-align:right; border-bottom:1px solid #333; padding:6px;">Contagem manual</th>
+          <th style="text-align:right; border-bottom:1px solid #333; padding:6px;">Diferença</th>
+        </tr></thead>
+        <tbody>${DATA.ingredientes.map(i=>`<tr><td style="padding:8px 6px; border-bottom:1px solid #ddd;">${esc(i.nome)} (${i.unidade})</td><td style="text-align:right; padding:8px 6px; border-bottom:1px solid #ddd;">${i.estoqueAtual}</td><td style="border-bottom:1px solid #ddd;">&nbsp;</td><td style="border-bottom:1px solid #ddd;">&nbsp;</td></tr>`).join('')}</tbody>
+      </table>
+      <p style="font-size:11.5px; color:#6b5c4a; margin-top:18px;">Depois de contar à mão, atualize os números em Estoque → Ajustar.</p>
+    </div>`;
+  document.getElementById('printarea').innerHTML = html;
+  window.print();
 }
 
 /* ============================= RENDER: NOVA VENDA ============================= */
@@ -904,10 +1108,10 @@ function renderNovaVenda(){
       </div>
       ${v.itens.map((it,i)=>`
         <div class="itemrow">
-          <input placeholder="Ex: Coxinha" value="${esc(it.produto)}" onchange="vendaDraft.itens[${i}].produto=this.value; renderMain();">
-          <input type="number" min="0" value="${it.qtd}" oninput="vendaDraft.itens[${i}].qtd=this.value; renderMain();">
-          <input type="number" min="0" step="0.01" value="${it.preco}" oninput="vendaDraft.itens[${i}].preco=this.value; renderMain();">
-          <input type="number" min="0" step="0.01" value="${it.custo}" oninput="vendaDraft.itens[${i}].custo=this.value; renderMain();">
+          <input placeholder="Nome do produto" value="${esc(it.produto)}" onchange="vendaDraft.itens[${i}].produto=this.value; renderMain();">
+          <input type="text" inputmode="decimal" min="0" value="${it.qtd}" oninput="vendaDraft.itens[${i}].qtd=this.value; renderMain();">
+          <input type="text" inputmode="decimal" min="0" step="0.01" value="${it.preco}" oninput="vendaDraft.itens[${i}].preco=this.value; renderMain();">
+          <input type="text" inputmode="decimal" min="0" step="0.01" value="${it.custo}" oninput="vendaDraft.itens[${i}].custo=this.value; renderMain();">
           <button class="iconbtn" onclick="vendaDraft.itens.splice(${i},1); renderMain();" title="Remover">✕</button>
         </div>`).join('')}
       <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
@@ -920,8 +1124,8 @@ function renderNovaVenda(){
       </div>
 
       <div class="rowline" style="margin-top:16px;">
-        <div class="field"><label>Desconto (R$)</label><input type="number" min="0" step="0.01" value="${v.desconto}" oninput="vendaDraft.desconto=this.value; renderMain();"></div>
-        <div class="field"><label>Taxa (R$)</label><input type="number" min="0" step="0.01" value="${v.taxa}" oninput="vendaDraft.taxa=this.value; renderMain();"></div>
+        <div class="field"><label>Desconto (R$)</label><input type="text" inputmode="decimal" min="0" step="0.01" value="${v.desconto}" oninput="vendaDraft.desconto=this.value; renderMain();"></div>
+        <div class="field"><label>Taxa (R$)</label><input type="text" inputmode="decimal" min="0" step="0.01" value="${v.taxa}" oninput="vendaDraft.taxa=this.value; renderMain();"></div>
       </div>
       <div class="rowline">
         <div class="field"><label>Forma de pagamento</label><select onchange="vendaDraft.formaPagamento=this.value;">${FORMAS_PAGAMENTO.map(f=>`<option ${v.formaPagamento===f?'selected':''}>${f}</option>`).join('')}</select></div>
@@ -950,24 +1154,31 @@ function renderNovaVenda(){
 }
 function adicionarItemDoCatalogo(id){
   const p = DATA.produtos.find(x=>x.id===id); if(!p) return;
-  const preco = (p.precoPraticado!==undefined && p.precoPraticado!=='' && p.precoPraticado!==null) ? Number(p.precoPraticado) : precoSugeridoProduto(p);
+  const preco = (p.precoPraticado!==undefined && p.precoPraticado!=='' && p.precoPraticado!==null) ? parseNum(p.precoPraticado) : precoSugeridoProduto(p);
   const custo = custoUnitarioProduto(p);
-  vendaDraft.itens.push({produto:p.nome, qtd:1, preco: Number(preco.toFixed(2)), custo: Number(custo.toFixed(2))});
+  vendaDraft.itens.push({produto:p.nome, produtoId:p.id, qtd:1, preco: Number(preco.toFixed(2)), custo: Number(custo.toFixed(2))});
   renderMain();
 }
 function salvarVenda(){
   const v = vendaDraft;
-  v.itens = v.itens.filter(it=>it.produto && Number(it.qtd)>0);
+  v.itens = v.itens.filter(it=>it.produto && parseNum(it.qtd)>0);
   if(v.itens.length===0){ alert('Adicione ao menos um item com produto e quantidade.'); return; }
   if(!v.clienteId && !v.clienteNomeAvulso){ if(!confirm('Nenhum cliente selecionado. Registrar como venda avulsa?')) return; }
   const novo = {...v, id:uid('venda')};
   DATA.vendas.push(novo);
   DATA.proximoPedido = Number(DATA.proximoPedido)+1;
+  novo.itens.forEach(it=>{
+    if(it.produtoId){
+      const p = DATA.produtos.find(x=>x.id===it.produtoId);
+      if(p){ p.estoqueAtual = (Number(p.estoqueAtual)||0) - parseNum(it.qtd); }
+    }
+  });
   save();
   vendaDraft = null;
   openNotinha(novo.id);
   go('vendas');
 }
+
 
 /* ============================= RENDER: VENDAS / PEDIDOS ============================= */
 function renderVendas(){
@@ -978,7 +1189,10 @@ function renderVendas(){
 
   return `
   <div class="pagehead"><div><h1>Pedidos</h1><p>${lista.length} pedido(s) no período selecionado.</p></div>
-    <button class="btn gold" onclick="go('novaVenda')">+ Nova venda</button>
+    <div style="display:flex; gap:8px;">
+      <button class="btn ghost" onclick="imprimirListaVendas('${f.period}')">Imprimir lista</button>
+      <button class="btn gold" onclick="go('novaVenda')">+ Nova venda</button>
+    </div>
   </div>
   <div class="tabs">
     ${['hoje','semana','mes','mesAnterior','custom'].map(p=>`<button class="tabbtn ${f.period===p?'active':''}" onclick="FILTERS.vendas.period='${p}'; renderMain();">${{hoje:'Hoje',semana:'Esta semana',mes:'Este mês',mesAnterior:'Mês anterior',custom:'Personalizado'}[p]}</button>`).join('')}
@@ -1030,7 +1244,7 @@ function openNotinha(vendaId){
   const root = document.getElementById('modalRoot');
   const html = (mostrarCusto)=>`
     <div class="receipt" id="receiptContent">
-      <h2>JACK SALGADINHOS</h2>
+      <h2>${esc(nomeNegocio().toUpperCase())}</h2>
       <div class="muted">Comprovante interno do pedido — não é documento fiscal</div>
       <div style="margin-top:12px; font-size:13px; line-height:1.7;">
         <b>Pedido:</b> #${v.numero}<br>
@@ -1040,7 +1254,7 @@ function openNotinha(vendaId){
       </div>
       <table>
         <thead><tr><th>Produto</th><th class="num">Qtd</th><th class="num">Unit.</th><th class="num">Total</th></tr></thead>
-        <tbody>${(v.itens||[]).map(it=>`<tr><td>${esc(it.produto)}</td><td class="num">${it.qtd}</td><td class="num">${brl(it.preco)}</td><td class="num">${brl((Number(it.qtd)||0)*(Number(it.preco)||0))}</td></tr>`).join('')}</tbody>
+        <tbody>${(v.itens||[]).map(it=>`<tr><td>${esc(it.produto)}</td><td class="num">${it.qtd}</td><td class="num">${brl(it.preco)}</td><td class="num">${brl((parseNum(it.qtd)||0)*(parseNum(it.preco)||0))}</td></tr>`).join('')}</tbody>
       </table>
       <hr>
       <div class="totline"><span>Subtotal</span><span class="num">${brl(subtotal)}</span></div>
@@ -1080,14 +1294,14 @@ function textoNotinha(vendaId){
   const v = DATA.vendas.find(x=>x.id===vendaId);
   const cli = DATA.clientes.find(c=>c.id===v.clienteId);
   const nomeCliente = cli?cli.nome:(v.clienteNomeAvulso||'Cliente avulso');
-  let t = `*JACK SALGADINHOS*\nPedido #${v.numero} — ${fmtDate(v.data)}\nCliente: ${nomeCliente}\n\n`;
-  (v.itens||[]).forEach(it=>{ t+= `${it.qtd}x ${it.produto} — ${brl((Number(it.qtd)||0)*(Number(it.preco)||0))}\n`; });
+  let t = `*${nomeNegocio().toUpperCase()}*\nPedido #${v.numero} — ${fmtDate(v.data)}\nCliente: ${nomeCliente}\n\n`;
+  (v.itens||[]).forEach(it=>{ t+= `${it.qtd}x ${it.produto} — ${brl((parseNum(it.qtd)||0)*(parseNum(it.preco)||0))}\n`; });
   t += `\nSubtotal: ${brl(vendaSubtotal(v))}\nDesconto: ${brl(v.desconto)}\nTaxas: ${brl(v.taxa)}\n*Total: ${brl(vendaTotal(v))}*\nPagamento: ${v.formaPagamento}`;
   return t;
 }
 function compartilharNotinha(vendaId){
   const texto = textoNotinha(vendaId);
-  if(navigator.share){ navigator.share({title:'Jack Salgadinhos — Notinha', text:texto}).catch(()=>{}); }
+  if(navigator.share){ navigator.share({title: nomeNegocio() + ' — Notinha', text:texto}).catch(()=>{}); }
   else { navigator.clipboard?.writeText(texto); alert('Notinha copiada para a área de transferência.'); }
 }
 function whatsappNotinha(vendaId){
@@ -1099,9 +1313,9 @@ function whatsappNotinha(vendaId){
 function renderCustos(){
   const f = FILTERS.custos;
   const lista = custosNoPeriodo(f.period, f.from, f.to).slice().sort((a,b)=>a.data<b.data?1:-1);
-  const total = lista.reduce((s,c)=>s+(Number(c.valor)||0),0);
+  const total = lista.reduce((s,c)=>s+(parseNum(c.valor)||0),0);
   const porCategoria = {};
-  lista.forEach(c=>{ porCategoria[c.categoria]=(porCategoria[c.categoria]||0)+(Number(c.valor)||0); });
+  lista.forEach(c=>{ porCategoria[c.categoria]=(porCategoria[c.categoria]||0)+(parseNum(c.valor)||0); });
   const cats = Object.entries(porCategoria).sort((a,b)=>b[1]-a[1]);
 
   return `
@@ -1146,7 +1360,7 @@ function openCustoModal(){
       <form id="custoForm">
         <div class="rowline">
           <div class="field"><label>Categoria</label><select name="categoria">${CATEGORIAS_CUSTO.map(c=>`<option>${c}</option>`).join('')}</select></div>
-          <div class="field"><label>Valor (R$)</label><input required type="number" step="0.01" min="0" name="valor"></div>
+          <div class="field"><label>Valor (R$)</label><input required type="text" inputmode="decimal" step="0.01" min="0" name="valor"></div>
         </div>
         <div class="field"><label>Data</label><input type="date" name="data" value="${todayISO()}"></div>
         <div class="field"><label>Descrição</label><input name="descricao" placeholder="Ex: Compra de farinha e óleo"></div>
@@ -1160,7 +1374,7 @@ function openCustoModal(){
   document.getElementById('custoForm').addEventListener('submit',(e)=>{
     e.preventDefault();
     const f = new FormData(e.target);
-    DATA.custos.push({id:uid('custo'), categoria:f.get('categoria'), valor:Number(f.get('valor')), data:f.get('data')||todayISO(), descricao:f.get('descricao')});
+    DATA.custos.push({id:uid('custo'), categoria:f.get('categoria'), valor:parseNum(f.get('valor')), data:f.get('data')||todayISO(), descricao:f.get('descricao')});
     save(); closeModal(); renderMain();
   });
 }
@@ -1177,7 +1391,9 @@ function renderRelatorio(){
   const cs = custosNoPeriodo(period);
   const r = resumoFinanceiro(vs, cs);
   return `
-  <div class="pagehead"><div><h1>Resultado do mês</h1><p>Uma DRE simplificada para acompanhar o negócio — não substitui a contabilidade oficial.</p></div></div>
+  <div class="pagehead"><div><h1>Resultado do mês</h1><p>Uma DRE simplificada para acompanhar o negócio — não substitui a contabilidade oficial.</p></div>
+    <button class="btn ghost" onclick="imprimirRelatorioMes('${period}')">Imprimir / salvar PDF</button>
+  </div>
   <div class="tabs">
     ${['hoje','semana','mes','mesAnterior'].map(p=>`<button class="tabbtn ${period===p?'active':''}" onclick="go('relatorio',{period:'${p}'})">${{hoje:'Hoje',semana:'Esta semana',mes:'Este mês',mesAnterior:'Mês anterior'}[p]}</button>`).join('')}
   </div>
@@ -1281,6 +1497,12 @@ function renderGraficos(){
   `;
 }
 function mountGraficos(){
+  if(typeof Chart==='undefined'){
+    document.querySelectorAll('#main canvas').forEach(c=>{
+      c.outerHTML = '<div style="padding:20px 0; text-align:center; color:var(--umber-soft); font-size:13px;">Gráfico indisponível agora — verifique sua conexão com a internet e recarregue a página.</div>';
+    });
+    return;
+  }
   CHART_INSTANCES.forEach(c=>c.destroy()); CHART_INSTANCES=[];
   const n = FILTERS.graficos.meses;
   const meses = last12Months().slice(12-n);
@@ -1344,7 +1566,7 @@ function exportarBackup(){
   const blob = new Blob([JSON.stringify(DATA,null,2)], {type:'application/json'});
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
-  a.href = url; a.download = `backup-jack-salgadinhos-${todayISO()}.json`;
+  a.href = url; a.download = `backup-${slug(nomeNegocio())}-${todayISO()}.json`;
   document.body.appendChild(a); a.click(); a.remove();
   URL.revokeObjectURL(url);
 }
@@ -1359,6 +1581,125 @@ function restaurarBackup(ev){
     }catch(err){ alert('Arquivo inválido. Selecione um backup exportado por este aplicativo.'); }
   };
   reader.readAsText(file);
+}
+
+/* ============================= CONFIGURAÇÕES ============================= */
+function renderConfig(){
+  return `
+  <div class="pagehead"><div><h1>Configurações</h1><p>Preferências gerais do aplicativo. Este é um app de gestão genérico — dá para usar em qualquer tipo de negócio.</p></div></div>
+  <div class="card" style="margin-bottom:16px;">
+    <div class="stat-label">Nome do negócio</div>
+    <p class="stat-sub" style="margin:8px 0 12px;">Aparece nos recibos, impressões e no ícone do app instalado no celular. Pode ser "Jack Salgadinhos", "Bolos da Ana", "Açaí do Porto"... o que for.</p>
+    <input type="text" value="${esc(nomeNegocio())}" onchange="DATA.config.nomeNegocio=this.value; save(); setupPWA(); renderMain();" placeholder="Nome do seu negócio">
+  </div>
+  <div class="grid cols-2">
+    <div class="card">
+      <div class="stat-label">Moeda</div>
+      <p class="stat-sub" style="margin:8px 0 12px;">Usada em todos os valores mostrados no aplicativo (vendas, custos, relatórios).</p>
+      <select onchange="DATA.config.moeda=this.value; save(); renderMain();">
+        ${Object.keys(MOEDAS).map(k=>`<option value="${k}" ${moedaAtual()===k?'selected':''}>${MOEDAS[k].nome}</option>`).join('')}
+      </select>
+    </div>
+    <div class="card">
+      <div class="stat-label">Idioma</div>
+      <p class="stat-sub" style="margin:8px 0 12px;">Ajusta o formato das datas (dia/mês ou mês/dia). A tradução completa da interface ainda está em português.</p>
+      <select onchange="DATA.config.idioma=this.value; save(); renderMain();">
+        ${Object.keys(IDIOMAS).map(k=>`<option value="${k}" ${idiomaAtual()===k?'selected':''}>${IDIOMAS[k]}</option>`).join('')}
+      </select>
+    </div>
+  </div>
+  `;
+}
+
+/* ============================= IMPRESSÃO GERAL ============================= */
+function imprimirBloco(titulo, htmlInterno){
+  const html = `<div style="font-family:'Inter',sans-serif; color:#1c140c; padding:10px;">
+    <h2 style="font-family:'Fraunces',serif; margin-bottom:2px;">${esc(nomeNegocio().toUpperCase())}</h2>
+    <p style="font-size:12.5px; color:#6b5c4a; margin-top:0;">${esc(titulo)} — gerado em ${fmtDate(todayISO())}</p>
+    ${htmlInterno}
+  </div>`;
+  document.getElementById('printarea').innerHTML = html;
+  window.print();
+}
+function imprimirRelatorioMes(period){
+  const vs = vendasNoPeriodo(period); const cs = custosNoPeriodo(period);
+  const r = resumoFinanceiro(vs, cs);
+  const html = `
+    <table style="width:100%; border-collapse:collapse; font-size:13.5px; max-width:480px;">
+      ${[['Faturamento bruto', r.faturamento],['− Descontos', -r.descontos],['= Receita de vendas', r.receitaVendas],
+         ['− Custo de produção', -r.custoProducao],['− Taxas', -r.taxas],['− Custos variáveis', -r.custosVar],
+         ['− Custos fixos', -r.custosFixos],['= Lucro líquido', r.lucro]]
+        .map(([label,val])=>`<tr><td style="padding:6px 4px; border-bottom:1px solid #eee;">${label}</td><td style="padding:6px 4px; text-align:right; border-bottom:1px solid #eee;">${brl(val)}</td></tr>`).join('')}
+      <tr><td style="padding:6px 4px; font-weight:700;">Margem líquida</td><td style="padding:6px 4px; text-align:right; font-weight:700;">${r.margem.toFixed(1)}%</td></tr>
+    </table>`;
+  imprimirBloco('Resultado do período', html);
+}
+function imprimirListaClientes(){
+  const lista = rankingClientes().sort((a,b)=>b.totalGasto-a.totalGasto);
+  const html = `<table style="width:100%; border-collapse:collapse; font-size:12.5px;">
+    <thead><tr>
+      <th style="text-align:left; border-bottom:1px solid #333; padding:6px;">Cliente</th>
+      <th style="text-align:right; border-bottom:1px solid #333; padding:6px;">Compras</th>
+      <th style="text-align:right; border-bottom:1px solid #333; padding:6px;">Total gasto</th>
+      <th style="text-align:right; border-bottom:1px solid #333; padding:6px;">Última compra</th>
+    </tr></thead>
+    <tbody>${lista.map(c=>`<tr><td style="padding:7px 6px; border-bottom:1px solid #ddd;">${esc(c.nome)}</td><td style="text-align:right; padding:7px 6px; border-bottom:1px solid #ddd;">${c.totalCompras}</td><td style="text-align:right; padding:7px 6px; border-bottom:1px solid #ddd;">${brl(c.totalGasto)}</td><td style="text-align:right; padding:7px 6px; border-bottom:1px solid #ddd;">${c.ultima?fmtDate(c.ultima):'—'}</td></tr>`).join('')}</tbody>
+  </table>`;
+  imprimirBloco('Lista de clientes', html);
+}
+function imprimirListaVendas(period){
+  const lista = vendasNoPeriodo(period).slice().sort((a,b)=>a.data<b.data?1:-1);
+  const html = `<table style="width:100%; border-collapse:collapse; font-size:12.5px;">
+    <thead><tr>
+      <th style="text-align:left; border-bottom:1px solid #333; padding:6px;">Pedido</th>
+      <th style="text-align:left; border-bottom:1px solid #333; padding:6px;">Data</th>
+      <th style="text-align:right; border-bottom:1px solid #333; padding:6px;">Total</th>
+      <th style="text-align:right; border-bottom:1px solid #333; padding:6px;">Lucro</th>
+      <th style="text-align:left; border-bottom:1px solid #333; padding:6px;">Status</th>
+    </tr></thead>
+    <tbody>${lista.map(v=>{
+      const cli = DATA.clientes.find(c=>c.id===v.clienteId);
+      return `<tr><td style="padding:7px 6px; border-bottom:1px solid #ddd;">#${v.numero} — ${esc(cli?cli.nome:(v.clienteNomeAvulso||'Avulso'))}</td><td style="padding:7px 6px; border-bottom:1px solid #ddd;">${fmtDate(v.data)}</td><td style="text-align:right; padding:7px 6px; border-bottom:1px solid #ddd;">${brl(vendaTotal(v))}</td><td style="text-align:right; padding:7px 6px; border-bottom:1px solid #ddd;">${brl(vendaLucro(v))}</td><td style="padding:7px 6px; border-bottom:1px solid #ddd;">${v.status}</td></tr>`;
+    }).join('')}</tbody>
+  </table>`;
+  imprimirBloco('Pedidos do período', html);
+}
+function imprimirEstoque(){
+  const html = `
+    <h3 style="margin:10px 0 6px;">Produtos prontos</h3>
+    <table style="width:100%; border-collapse:collapse; font-size:12.5px;">
+      <tbody>${DATA.produtos.map(p=>`<tr><td style="padding:6px; border-bottom:1px solid #ddd;">${esc(p.nome)}</td><td style="text-align:right; padding:6px; border-bottom:1px solid #ddd;">${p.estoqueAtual} un.</td></tr>`).join('')}</tbody>
+    </table>
+    <h3 style="margin:18px 0 6px;">Matéria-prima</h3>
+    <table style="width:100%; border-collapse:collapse; font-size:12.5px;">
+      <tbody>${DATA.ingredientes.map(i=>`<tr><td style="padding:6px; border-bottom:1px solid #ddd;">${esc(i.nome)}</td><td style="text-align:right; padding:6px; border-bottom:1px solid #ddd;">${i.estoqueAtual} ${i.unidade}</td></tr>`).join('')}</tbody>
+    </table>`;
+  imprimirBloco('Posição de estoque', html);
+}
+
+/* ============================= MÁSCARAS E SUGESTÕES DE CAMPO ============================= */
+function maskTelefone(v){
+  let d = String(v||'').replace(/\D/g,'').slice(0,11);
+  if(d.length>10) return d.replace(/(\d{2})(\d{5})(\d{0,4})/, (m,a,b,c)=> c? `(${a}) ${b}-${c}` : `(${a}) ${b}`);
+  if(d.length>6) return d.replace(/(\d{2})(\d{4})(\d{0,4})/, (m,a,b,c)=> c? `(${a}) ${b}-${c}` : `(${a}) ${b}`);
+  if(d.length>2) return d.replace(/(\d{2})(\d{0,5})/, (m,a,b)=> b? `(${a}) ${b}` : `(${a}`);
+  if(d.length>0) return `(${d}`;
+  return '';
+}
+function aplicarMascaraTelefone(el){
+  const pos = el.selectionStart;
+  const antes = el.value.length;
+  el.value = maskTelefone(el.value);
+  const depois = el.value.length;
+  try{ el.selectionStart = el.selectionEnd = pos + (depois-antes); }catch(e){}
+}
+const DOMINIOS_EMAIL = ['gmail.com','hotmail.com','outlook.com','yahoo.com.br','icloud.com'];
+function atualizarSugestoesEmail(valor){
+  const dl = document.getElementById('emailSuggestions');
+  if(!dl) return;
+  const base = valor.includes('@') ? valor.split('@')[0] : valor;
+  if(!base){ dl.innerHTML=''; return; }
+  dl.innerHTML = DOMINIOS_EMAIL.map(d=>`<option value="${base}@${d}"></option>`).join('');
 }
 
 /* ============================= RENDER PRINCIPAL ============================= */
@@ -1378,6 +1719,8 @@ function renderMain(){
     case 'rankings': html = renderRankings(); break;
     case 'graficos': html = renderGraficos(); break;
     case 'backup': html = renderBackup(); break;
+    case 'estoque': html = renderEstoque(); break;
+    case 'config': html = renderConfig(); break;
     default: html = renderDashboard();
   }
   main.innerHTML = html;
@@ -1395,7 +1738,7 @@ function gerarIconeApp(tamanho){
   ctx.fillStyle = '#2E2117';
   ctx.font = `700 ${Math.round(tamanho*0.34)}px Georgia, serif`;
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  ctx.fillText('JS', tamanho/2, tamanho/2 + tamanho*0.02);
+  ctx.fillText(iniciaisNegocio(), tamanho/2, tamanho/2 + tamanho*0.02);
   return c.toDataURL('image/png');
 }
 function setupPWA(){
@@ -1403,8 +1746,8 @@ function setupPWA(){
     const icon192 = gerarIconeApp(192);
     const icon512 = gerarIconeApp(512);
     const manifest = {
-      name: 'Jack Salgadinhos — Gestão',
-      short_name: 'Jack Salgadinhos',
+      name: nomeNegocio() + ' — Gestão',
+      short_name: nomeNegocio().slice(0,20),
       start_url: '.',
       display: 'standalone',
       background_color: '#FBF5E9',
