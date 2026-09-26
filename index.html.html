@@ -12,6 +12,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.4/chart.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <style>
   :root{
     --cream:#FBF5E9;
@@ -227,6 +228,8 @@
   }
 
   ::placeholder{ color:#B9AC94; }
+  @page thermal58{ size:58mm auto; margin:2mm; }
+  .print-thermal-content{ page: thermal58; }
   @media print{
     #sidebar, .pagehead, .no-print, .mobile-menu-overlay, .mobile-menu-btn{ display:none !important; }
     #main{ padding:0; max-width:none; }
@@ -315,6 +318,9 @@ function ensureShape(){
   DATA.clientes = DATA.clientes || [];
   DATA.vendas = DATA.vendas || [];
   DATA.custos = DATA.custos || [];
+  DATA.custosFixos = DATA.custosFixos || [];
+  DATA.concorrentes = DATA.concorrentes || [];
+  DATA.custos.forEach(c=>{ if(!c.tipo) c.tipo = CATEGORIA_TIPO[c.categoria] || 'variavel'; });
   DATA.ingredientes = DATA.ingredientes || [];
   DATA.produtos = DATA.produtos || [];
   DATA.proximoPedido = DATA.proximoPedido || 1001;
@@ -422,14 +428,50 @@ function custosNoPeriodo(period, customFrom, customTo){
   const {from,to} = periodRange(period, customFrom, customTo);
   return DATA.custos.filter(c=>inRange(c.data, from, to));
 }
+function diasNoPeriodo(from, to){
+  const d1 = new Date(from+'T00:00:00'), d2 = new Date(to+'T00:00:00');
+  return Math.max(1, Math.round((d2-d1)/86400000)+1);
+}
+function diasNoMesDe(iso){
+  const [y,m] = iso.split('-').map(Number);
+  return new Date(y, m, 0).getDate();
+}
+function totalFixosRecorrentes(){
+  return (DATA.custosFixos||[]).filter(c=>c.ativo!==false).reduce((s,c)=>s+parseNum(c.valor),0);
+}
+function fixosRecorrentesNoPeriodo(from, to){
+  const dias = diasNoPeriodo(from, to);
+  const diasRef = diasNoMesDe(from);
+  return totalFixosRecorrentes() * (dias/diasRef);
+}
 
+function resumoCompleto(period, customFrom, customTo){
+  const {from,to} = periodRange(period, customFrom, customTo);
+  const vendasArr = DATA.vendas.filter(v=>inRange(v.data, from, to));
+  const custosArr = DATA.custos.filter(c=>inRange(c.data, from, to));
+  const faturamento = vendasArr.reduce((s,v)=>s+vendaSubtotal(v),0);
+  const descontos = vendasArr.reduce((s,v)=>s+(parseNum(v.desconto)||0),0);
+  const taxas = vendasArr.reduce((s,v)=>s+(parseNum(v.taxa)||0),0);
+  const custoProducao = vendasArr.reduce((s,v)=>s+vendaCusto(v),0);
+  const custosVar = custosArr.filter(c=>c.tipo!=='fixo').reduce((s,c)=>s+(parseNum(c.valor)||0),0);
+  const custosFixosLancados = custosArr.filter(c=>c.tipo==='fixo').reduce((s,c)=>s+(parseNum(c.valor)||0),0);
+  const custosFixosRecorrentes = fixosRecorrentesNoPeriodo(from, to);
+  const custosFixos = custosFixosLancados + custosFixosRecorrentes;
+  const custoTotal = custoProducao + custosVar + custosFixos + taxas;
+  const receitaVendas = faturamento - descontos;
+  const lucro = receitaVendas - custoProducao - taxas - custosVar - custosFixos;
+  const margem = receitaVendas>0 ? (lucro/receitaVendas*100) : 0;
+  const pedidos = vendasArr.length;
+  const unidades = vendasArr.reduce((s,v)=>s+vendaQtdItens(v),0);
+  return {faturamento,descontos,taxas,custoProducao,custosVar,custosFixos,custosFixosRecorrentes,custosFixosLancados,custoTotal,receitaVendas,lucro,margem,pedidos,unidades};
+}
 function resumoFinanceiro(vendasArr, custosArr){
   const faturamento = vendasArr.reduce((s,v)=>s+vendaSubtotal(v),0);
   const descontos = vendasArr.reduce((s,v)=>s+(parseNum(v.desconto)||0),0);
   const taxas = vendasArr.reduce((s,v)=>s+(parseNum(v.taxa)||0),0);
   const custoProducao = vendasArr.reduce((s,v)=>s+vendaCusto(v),0);
-  const custosVar = custosArr.filter(c=>CATEGORIA_TIPO[c.categoria]==='variavel').reduce((s,c)=>s+(parseNum(c.valor)||0),0);
-  const custosFixos = custosArr.filter(c=>CATEGORIA_TIPO[c.categoria]==='fixo').reduce((s,c)=>s+(parseNum(c.valor)||0),0);
+  const custosVar = custosArr.filter(c=>c.tipo!=='fixo').reduce((s,c)=>s+(parseNum(c.valor)||0),0);
+  const custosFixos = custosArr.filter(c=>c.tipo==='fixo').reduce((s,c)=>s+(parseNum(c.valor)||0),0);
   const custoTotal = custoProducao + custosVar + custosFixos + taxas;
   const receitaVendas = faturamento - descontos;
   const lucro = receitaVendas - custoProducao - taxas - custosVar - custosFixos;
@@ -494,8 +536,10 @@ const NAV_ITEMS = [
   {id:'custos', label:'Custos do mês', icon:'wallet'},
   {id:'relatorio', label:'Resultado do mês', icon:'chart'},
   {id:'rankings', label:'Rankings', icon:'trophy'},
+  {id:'concorrentes', label:'Concorrentes', icon:'versus'},
   {id:'graficos', label:'Gráficos', icon:'trend'},
   {id:'backup', label:'Backup', icon:'cloud'},
+  {id:'planilhas', label:'Planilhas', icon:'sheet'},
   {id:'config', label:'Configurações', icon:'gear'},
 ];
 const ICONS = {
@@ -506,11 +550,13 @@ const ICONS = {
   wallet:'<path d="M3 7a2 2 0 012-2h13a1 1 0 011 1v3M3 7v11a2 2 0 002 2h14a2 2 0 002-2v-8a1 1 0 00-1-1H16a2 2 0 100 4h5" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/>',
   chart:'<path d="M4 19V9M11 19V4M18 19v-7" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>',
   trophy:'<path d="M8 21h8M12 17v4M7 4h10v4a5 5 0 01-10 0V4zM7 5H4v2a3 3 0 003 3M17 5h3v2a3 3 0 01-3 3" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/>',
+  versus:'<circle cx="6" cy="12" r="3.2" stroke="currentColor" stroke-width="1.6" fill="none"/><circle cx="18" cy="12" r="3.2" stroke="currentColor" stroke-width="1.6" fill="none"/><path d="M9.5 9.5l5-5M9.5 14.5l5 5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>',
   trend:'<path d="M3 17l6-6 4 4 8-8M15 7h6v6" stroke="currentColor" stroke-width="1.7" fill="none" stroke-linecap="round" stroke-linejoin="round"/>',
   cloud:'<path d="M7 18a4 4 0 01-1-7.9A5 5 0 0116 8a4.5 4.5 0 011 8.9M12 12v7m0-7l-3 3m3-3l3 3" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/>',
   tag:'<path d="M3 11l8-8h6a2 2 0 012 2v6l-8 8a2 2 0 01-2.8 0l-5.2-5.2a2 2 0 010-2.8z" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linejoin="round"/><circle cx="14.5" cy="9.5" r="1.4" fill="currentColor"/>',
   box:'<path d="M3 8l9-5 9 5-9 5-9-5zM3 8v8l9 5 9-5V8M12 13v8" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linejoin="round" stroke-linecap="round"/>',
   gear:'<path d="M12 15a3 3 0 100-6 3 3 0 000 6z" stroke="currentColor" stroke-width="1.6" fill="none"/><path d="M19.4 13a7.6 7.6 0 000-2l2-1.5-2-3.4-2.3.9a7.5 7.5 0 00-1.7-1L15 3.5h-6l-.4 2.5a7.5 7.5 0 00-1.7 1l-2.3-.9-2 3.4L4.6 11a7.6 7.6 0 000 2l-2 1.5 2 3.4 2.3-.9c.5.4 1.1.75 1.7 1l.4 2.5h6l.4-2.5a7.5 7.5 0 001.7-1l2.3.9 2-3.4-2-1.5z" stroke="currentColor" stroke-width="1.3" fill="none" stroke-linejoin="round"/>',
+  sheet:'<path d="M5 3h9l5 5v13a1 1 0 01-1 1H5a1 1 0 01-1-1V4a1 1 0 011-1z" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linejoin="round"/><path d="M8 12h8M8 16h8M8 8h3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>',
 };
 
 function go(tab, params){ ROUTE = {tab, params: params||{}}; render(); window.scrollTo(0,0); }
@@ -546,8 +592,8 @@ function closeMobileMenu(){
 
 /* ============================= RENDER: DASHBOARD ============================= */
 function renderDashboard(){
-  const hoje = resumoFinanceiro(vendasNoPeriodo('hoje'), custosNoPeriodo('hoje'));
-  const mes = resumoFinanceiro(vendasNoPeriodo('mes'), custosNoPeriodo('mes'));
+  const hoje = resumoCompleto('hoje');
+  const mes = resumoCompleto('mes');
   const rankMes = rankingProdutos(vendasNoPeriodo('mes')).sort((a,b)=>b.qtd-a.qtd).slice(0,4);
   const melhores = rankingClientes().sort((a,b)=>b.totalGasto-a.totalGasto).slice(0,4);
 
@@ -741,7 +787,10 @@ function renderPrecificacao(){
   return `
   <div class="pagehead">
     <div><h1>Precificação</h1><p>Custo dos ingredientes, custo de produção e preço sugerido para cada produto.</p></div>
-    <button class="btn gold" onclick="${sub==='ingredientes' ? 'openIngredienteModal()' : 'openProdutoModal()'}">+ ${sub==='ingredientes'?'Novo ingrediente':'Novo produto'}</button>
+    <div style="display:flex; gap:8px; flex-wrap:wrap;">
+      <button class="btn ghost" onclick="imprimirPrecificacao()">Imprimir precificação completa</button>
+      <button class="btn gold" onclick="${sub==='ingredientes' ? 'openIngredienteModal()' : 'openProdutoModal()'}">+ ${sub==='ingredientes'?'Novo ingrediente':'Novo produto'}</button>
+    </div>
   </div>
   <div class="tabs">
     <button class="tabbtn ${sub==='produtos'?'active':''}" onclick="go('precificacao',{sub:'produtos'})">Produtos (receitas)</button>
@@ -756,13 +805,14 @@ function renderIngredientesTab(){
   return `
   <div class="card" style="padding:0;">
     <table>
-      <thead><tr><th>Ingrediente</th><th class="num">Comprado</th><th class="num">Preço pago</th><th class="num">Custo por unidade</th><th></th></tr></thead>
+      <thead><tr><th>Ingrediente</th><th class="num">Comprado</th><th class="num">Preço pago</th><th class="num">Custo por unidade</th><th>Validade</th><th></th></tr></thead>
       <tbody>
       ${lista.map(ing=>`<tr>
         <td>${esc(ing.nome)}</td>
         <td class="num">${ing.quantidade} ${ing.unidade}</td>
         <td class="num">${brl(ing.precoCompra)}</td>
         <td class="num">${brl(custoUnidadeBaseIngrediente(ing))}/${ing.unidade}</td>
+        <td>${ing.validade?fmtDate(ing.validade):'—'}</td>
         <td style="text-align:right;"><button class="btn ghost sm" onclick="openIngredienteModal('${ing.id}')">Editar</button></td>
       </tr>`).join('')}
       </tbody>
@@ -788,7 +838,11 @@ function renderProdutosTab(){
           <td class="num">${parseNum(p.margem)||0}%</td>
           <td class="num">${brl(sugerido)}</td>
           <td class="num" style="font-weight:700;">${brl(p.precoPraticado!==undefined && p.precoPraticado!==null && p.precoPraticado!=='' ? p.precoPraticado : sugerido)}</td>
-          <td style="text-align:right;"><button class="btn ghost sm" onclick="openProdutoModal('${p.id}')">Editar</button></td>
+          <td style="text-align:right; white-space:nowrap;">
+            <button class="btn ghost sm" onclick="imprimirFichaTecnica('${p.id}')">Ficha técnica</button>
+            <button class="btn ghost sm" onclick="imprimirPrecificacaoProduto('${p.id}')">Imprimir preço</button>
+            <button class="btn ghost sm" onclick="openProdutoModal('${p.id}')">Editar</button>
+          </td>
         </tr>`;
       }).join('')}
       </tbody>
@@ -811,6 +865,7 @@ function openIngredienteModal(id){
           <div class="field"><label>Unidade</label><select name="unidade">${UNIDADES_INGREDIENTE.map(u=>`<option ${ing?.unidade===u?'selected':''}>${u}</option>`).join('')}</select></div>
           <div class="field"><label>Preço pago (R$)</label><input required type="text" inputmode="decimal" step="0.01" min="0" name="precoCompra" value="${ing?.precoCompra??''}"></div>
         </div>
+        <div class="field"><label>Data de validade (opcional)</label><input type="date" name="validade" value="${ing?.validade||''}"></div>
         <div style="display:flex; justify-content:space-between; margin-top:18px;">
           <div>${ing? `<button type="button" class="btn danger sm" onclick="excluirIngrediente('${ing.id}')">Excluir</button>`:''}</div>
           <div style="display:flex; gap:8px;">
@@ -824,7 +879,7 @@ function openIngredienteModal(id){
   document.getElementById('ingForm').addEventListener('submit',(e)=>{
     e.preventDefault();
     const f = new FormData(e.target);
-    const obj = {nome:f.get('nome').trim(), quantidade:parseNum(f.get('quantidade')), unidade:f.get('unidade'), precoCompra:parseNum(f.get('precoCompra'))};
+    const obj = {nome:f.get('nome').trim(), quantidade:parseNum(f.get('quantidade')), unidade:f.get('unidade'), precoCompra:parseNum(f.get('precoCompra')), validade:f.get('validade')||''};
     if(!obj.nome) return;
     if(ing){ Object.assign(ing, obj); } else { DATA.ingredientes.push({id:uid('ing'), ...obj}); }
     save(); closeModal(); go('precificacao',{sub:'ingredientes'});
@@ -841,7 +896,7 @@ function excluirIngrediente(id){
 let produtoDraft = null;
 function openProdutoModal(id){
   const original = id ? DATA.produtos.find(x=>x.id===id) : null;
-  produtoDraft = original ? JSON.parse(JSON.stringify(original)) : {nome:'', rendimento:1, itens:[], embalagem:0, maoDeObra:0, outros:0, margem:40, precoPraticado:''};
+  produtoDraft = original ? JSON.parse(JSON.stringify(original)) : {nome:'', rendimento:1, itens:[], embalagem:0, maoDeObra:0, outros:0, margem:40, precoPraticado:'', modoPreparo:'', tempoPreparo:'', conservacao:''};
   renderProdutoModal(id);
 }
 function renderProdutoModal(id){
@@ -885,6 +940,39 @@ function renderProdutoModal(id){
         <div class="totline grand"><span>Custo unitário total</span><span class="num">${brl(custo)}</span></div>
         <div class="totline"><span style="font-weight:700;">Preço sugerido</span><span class="num" style="font-weight:700;">${brl(sugerido)}</span></div>
       </div>
+      <label style="display:block; font-size:12.5px; font-weight:600; color:var(--umber-soft); margin:18px 0 6px;">Ficha técnica (opcional)</label>
+      <div class="rowline">
+        <div class="field"><label>Tempo de preparo</label><input value="${esc(p.tempoPreparo||'')}" oninput="produtoDraft.tempoPreparo=this.value;" placeholder="Ex: 40 minutos"></div>
+        <div class="field"><label>Conservação / validade após pronto</label><input value="${esc(p.conservacao||'')}" oninput="produtoDraft.conservacao=this.value;" placeholder="Ex: Geladeira por até 3 dias"></div>
+      </div>
+      <div class="field"><label>Modo de preparo (um passo por linha)</label><textarea style="min-height:100px;" oninput="produtoDraft.modoPreparo=this.value;" placeholder="1. Cozinhe o frango e desfie...&#10;2. Misture com o tempero...&#10;3. Modele e empane...">${esc(p.modoPreparo||'')}</textarea></div>
+      <label style="display:block; font-size:12.5px; font-weight:600; color:var(--umber-soft); margin:18px 0 6px;">Informação nutricional (opcional)</label>
+      <p class="stat-sub" style="margin:-2px 0 10px;">Preencha com valores de análise laboratorial ou de uma fonte confiável — o app só organiza e imprime, não calcula os valores nutricionais.</p>
+      <div class="rowline">
+        <div class="field"><label>Porção</label><input value="${esc(p.nutriPorcao||'')}" oninput="produtoDraft.nutriPorcao=this.value;" placeholder="Ex: 30 g (1 unidade)"></div>
+        <div class="field"><label>Porções por embalagem</label><input value="${esc(p.nutriPorcoesEmbalagem||'')}" oninput="produtoDraft.nutriPorcoesEmbalagem=this.value;" placeholder="Ex: 6"></div>
+      </div>
+      <div class="rowline3">
+        <div class="field"><label>Valor energético (kcal)</label><input type="text" inputmode="decimal" value="${p.nutriEnergia||''}" oninput="produtoDraft.nutriEnergia=this.value;"></div>
+        <div class="field"><label>Carboidratos (g)</label><input type="text" inputmode="decimal" value="${p.nutriCarboidratos||''}" oninput="produtoDraft.nutriCarboidratos=this.value;"></div>
+        <div class="field"><label>Açúcares totais (g)</label><input type="text" inputmode="decimal" value="${p.nutriAcucaresTotais||''}" oninput="produtoDraft.nutriAcucaresTotais=this.value;"></div>
+      </div>
+      <div class="rowline3">
+        <div class="field"><label>Açúcares adicionados (g)</label><input type="text" inputmode="decimal" value="${p.nutriAcucaresAdicionados||''}" oninput="produtoDraft.nutriAcucaresAdicionados=this.value;"></div>
+        <div class="field"><label>Proteínas (g)</label><input type="text" inputmode="decimal" value="${p.nutriProteinas||''}" oninput="produtoDraft.nutriProteinas=this.value;"></div>
+        <div class="field"><label>Gorduras totais (g)</label><input type="text" inputmode="decimal" value="${p.nutriGordurasTotais||''}" oninput="produtoDraft.nutriGordurasTotais=this.value;"></div>
+      </div>
+      <div class="rowline3">
+        <div class="field"><label>Gorduras saturadas (g)</label><input type="text" inputmode="decimal" value="${p.nutriGordurasSaturadas||''}" oninput="produtoDraft.nutriGordurasSaturadas=this.value;"></div>
+        <div class="field"><label>Gorduras trans (g)</label><input type="text" inputmode="decimal" value="${p.nutriGordurasTrans||''}" oninput="produtoDraft.nutriGordurasTrans=this.value;"></div>
+        <div class="field"><label>Fibra alimentar (g)</label><input type="text" inputmode="decimal" value="${p.nutriFibra||''}" oninput="produtoDraft.nutriFibra=this.value;"></div>
+      </div>
+      <div class="field" style="max-width:220px;"><label>Sódio (mg)</label><input type="text" inputmode="decimal" value="${p.nutriSodio||''}" oninput="produtoDraft.nutriSodio=this.value;"></div>
+      ${id ? `
+      <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:10px;">
+        <button type="button" class="btn ghost sm" onclick="imprimirTabelaNutricionalPadrao(produtoDraft)">Imprimir tabela padrão (mercado)</button>
+        <button type="button" class="btn ghost sm" onclick="imprimirEtiquetaNutricional(produtoDraft)">Imprimir etiqueta bonita (com logo)</button>
+      </div>` : `<p class="stat-sub">Salve o produto para poder imprimir a tabela ou a etiqueta nutricional.</p>`}
       <div style="display:flex; justify-content:space-between; margin-top:18px;">
         <div>${id? `<button type="button" class="btn danger sm" onclick="excluirProduto('${id}')">Excluir</button>`:''}</div>
         <div style="display:flex; gap:8px;">
@@ -1276,7 +1364,8 @@ function openNotinha(vendaId){
       </label>
       <div id="receiptWrap">${html(false)}</div>
       <div style="display:flex; gap:8px; margin-top:18px; flex-wrap:wrap;">
-        <button class="btn gold" onclick="imprimirNotinha()">Imprimir / Salvar PDF</button>
+        <button class="btn gold" onclick="imprimirNotinha()">Imprimir A4 / Salvar PDF</button>
+        <button class="btn gold" onclick="imprimirNotinhaTermica('${v.id}')">Imprimir térmica (55mm)</button>
         <button class="btn ghost" onclick="compartilharNotinha('${v.id}')">Compartilhar</button>
         <button class="btn ghost" onclick="whatsappNotinha('${v.id}')">Enviar no WhatsApp</button>
       </div>
@@ -1288,6 +1377,35 @@ function openNotinha(vendaId){
 function imprimirNotinha(){
   const content = document.getElementById('receiptContent').outerHTML;
   document.getElementById('printarea').innerHTML = content;
+  window.print();
+}
+function imprimirNotinhaTermica(vendaId){
+  const v = DATA.vendas.find(x=>x.id===vendaId); if(!v) return;
+  const cli = DATA.clientes.find(c=>c.id===v.clienteId);
+  const nomeCliente = cli?cli.nome:(v.clienteNomeAvulso||'Cliente avulso');
+  const subtotal=vendaSubtotal(v), total=vendaTotal(v);
+  const linha = (esq,dir)=>`<div style="display:flex; justify-content:space-between; gap:6px;"><span>${esq}</span><span>${dir}</span></div>`;
+  const separador = `<div style="border-top:1px dashed #000; margin:4px 0;"></div>`;
+  const itensHtml = (v.itens||[]).map(it=>linha(`${parseNum(it.qtd)}x ${esc(it.produto)}`, brl(parseNum(it.qtd)*parseNum(it.preco)))).join('');
+  const html = `
+    <div class="print-thermal-content" style="width:54mm; font-family:'Courier New',monospace; font-size:11px; line-height:1.45; padding:2mm; color:#000;">
+      <div style="text-align:center; font-weight:700; font-size:12.5px;">${esc(nomeNegocio().toUpperCase())}</div>
+      <div style="text-align:center; font-size:10px;">Pedido #${v.numero} — ${fmtDate(v.data)}</div>
+      ${separador}
+      <div>Cliente: ${esc(nomeCliente)}</div>
+      ${separador}
+      ${itensHtml}
+      ${separador}
+      ${linha('Subtotal', brl(subtotal))}
+      ${parseNum(v.desconto)>0?linha('Desconto', '-'+brl(v.desconto)):''}
+      ${parseNum(v.taxa)>0?linha('Taxa', '+'+brl(v.taxa)):''}
+      ${separador}
+      <div style="display:flex; justify-content:space-between; font-weight:700; font-size:13px;"><span>TOTAL</span><span>${brl(total)}</span></div>
+      <div style="margin-top:4px;">Pagamento: ${v.formaPagamento}</div>
+      ${separador}
+      <div style="text-align:center; font-size:9.5px;">Recibo/comprovante de venda<br>Não é documento fiscal</div>
+    </div>`;
+  document.getElementById('printarea').innerHTML = html;
   window.print();
 }
 function textoNotinha(vendaId){
@@ -1312,15 +1430,41 @@ function whatsappNotinha(vendaId){
 /* ============================= CUSTOS ============================= */
 function renderCustos(){
   const f = FILTERS.custos;
-  const lista = custosNoPeriodo(f.period, f.from, f.to).slice().sort((a,b)=>a.data<b.data?1:-1);
-  const total = lista.reduce((s,c)=>s+(parseNum(c.valor)||0),0);
+  const {from,to} = periodRange(f.period, f.from, f.to);
+  const lista = custosNoPeriodo(f.period, f.from, f.to).filter(c=>c.tipo!=='fixo').slice().sort((a,b)=>a.data<b.data?1:-1);
+  const totalVar = lista.reduce((s,c)=>s+(parseNum(c.valor)||0),0);
+  const totalFixoPeriodo = fixosRecorrentesNoPeriodo(from, to);
+  const totalGeral = totalVar + totalFixoPeriodo;
   const porCategoria = {};
   lista.forEach(c=>{ porCategoria[c.categoria]=(porCategoria[c.categoria]||0)+(parseNum(c.valor)||0); });
   const cats = Object.entries(porCategoria).sort((a,b)=>b[1]-a[1]);
+  const fixos = (DATA.custosFixos||[]).slice().sort((a,b)=>a.nome.localeCompare(b.nome));
 
   return `
-  <div class="pagehead"><div><h1>Custos do mês</h1><p>Para onde o dinheiro está indo.</p></div>
-    <button class="btn gold" onclick="openCustoModal()">+ Novo custo</button>
+  <div class="pagehead"><div><h1>Custos</h1><p>Fixos ficam cadastrados uma vez; variáveis você lança conforme acontecem.</p></div></div>
+
+  <div class="section-title"><span>Custos fixos (recorrentes, todo mês)</span>
+    <button class="btn gold sm" onclick="openCustoFixoModal()">+ Novo custo fixo</button>
+  </div>
+  ${fixos.length===0? `<div class="card empty">Nenhum custo fixo cadastrado. Ex: aluguel, funcionários, internet — cadastre uma vez e ele conta todo mês sozinho.</div>` : `
+  <div class="card" style="padding:0; margin-bottom:10px;">
+    <table>
+      <thead><tr><th>Nome</th><th>Categoria</th><th class="num">Valor mensal</th><th>Status</th><th></th></tr></thead>
+      <tbody>${fixos.map(c=>`<tr>
+        <td>${esc(c.nome)}</td>
+        <td><span class="badge-cat">${c.categoria}</span></td>
+        <td class="num">${brl(c.valor)}</td>
+        <td><span class="pill ${c.ativo!==false?'pago':'cancelado'}">${c.ativo!==false?'Ativo':'Pausado'}</span></td>
+        <td style="text-align:right;">
+          <button class="btn ghost sm" onclick="openCustoFixoModal('${c.id}')">Editar</button>
+        </td>
+      </tr>`).join('')}</tbody>
+    </table>
+  </div>
+  <p class="stat-sub" style="margin-bottom:26px;">Total fixo mensal: <b>${brl(totalFixosRecorrentes())}</b> — entra automaticamente em todos os períodos, sem precisar lançar de novo.</p>`}
+
+  <div class="section-title"><span>Custos variáveis (lançados por período)</span>
+    <button class="btn gold sm" onclick="openCustoModal()">+ Novo custo variável</button>
   </div>
   <div class="tabs">
     ${['hoje','semana','mes','mesAnterior','custom'].map(p=>`<button class="tabbtn ${f.period===p?'active':''}" onclick="FILTERS.custos.period='${p}'; renderMain();">${{hoje:'Hoje',semana:'Esta semana',mes:'Este mês',mesAnterior:'Mês anterior',custom:'Personalizado'}[p]}</button>`).join('')}
@@ -1330,13 +1474,17 @@ function renderCustos(){
     <div class="field"><label>Até</label><input type="date" value="${f.to}" onchange="FILTERS.custos.to=this.value; renderMain();"></div>
   </div>`:''}
 
-  <div class="card" style="margin-bottom:20px;"><div class="stat-label">Custo total do período</div><div class="stat-value">${brl(total)}</div></div>
+  <div class="grid cols-3" style="margin-bottom:20px;">
+    <div class="card"><div class="stat-label">Variáveis do período</div><div class="stat-value small">${brl(totalVar)}</div></div>
+    <div class="card"><div class="stat-label">Fixos (proporcional ao período)</div><div class="stat-value small">${brl(totalFixoPeriodo)}</div></div>
+    <div class="card"><div class="stat-label">Total do período</div><div class="stat-value small" style="font-weight:700;">${brl(totalGeral)}</div></div>
+  </div>
 
   ${cats.length? `<div class="grid cols-3" style="margin-bottom:24px;">
-    ${cats.map(([cat,val])=>`<div class="card"><span class="badge-cat">${cat}</span><div class="stat-value small" style="margin-top:10px;">${brl(val)}</div><div class="stat-sub">${(val/total*100).toFixed(0)}% do total</div></div>`).join('')}
+    ${cats.map(([cat,val])=>`<div class="card"><span class="badge-cat">${cat}</span><div class="stat-value small" style="margin-top:10px;">${brl(val)}</div><div class="stat-sub">${(val/totalVar*100).toFixed(0)}% dos variáveis</div></div>`).join('')}
   </div>` : ''}
 
-  ${lista.length===0? `<div class="card empty">Nenhum custo lançado neste período.</div>` : `
+  ${lista.length===0? `<div class="card empty">Nenhum custo variável lançado neste período.</div>` : `
   <div class="card" style="padding:0;">
     <table>
       <thead><tr><th>Data</th><th>Categoria</th><th>Descrição</th><th class="num">Valor</th><th></th></tr></thead>
@@ -1356,11 +1504,11 @@ function openCustoModal(){
   root.innerHTML = `
   <div class="modal-backdrop" onclick="if(event.target===this) closeModal()">
     <div class="modal">
-      <div class="modal-head"><h2 style="margin:0;">Novo custo</h2><button class="modal-close" onclick="closeModal()">✕</button></div>
+      <div class="modal-head"><h2 style="margin:0;">Novo custo variável</h2><button class="modal-close" onclick="closeModal()">✕</button></div>
       <form id="custoForm">
         <div class="rowline">
           <div class="field"><label>Categoria</label><select name="categoria">${CATEGORIAS_CUSTO.map(c=>`<option>${c}</option>`).join('')}</select></div>
-          <div class="field"><label>Valor (R$)</label><input required type="text" inputmode="decimal" step="0.01" min="0" name="valor"></div>
+          <div class="field"><label>Valor (R$)</label><input required type="text" inputmode="decimal" name="valor"></div>
         </div>
         <div class="field"><label>Data</label><input type="date" name="data" value="${todayISO()}"></div>
         <div class="field"><label>Descrição</label><input name="descricao" placeholder="Ex: Compra de farinha e óleo"></div>
@@ -1374,7 +1522,7 @@ function openCustoModal(){
   document.getElementById('custoForm').addEventListener('submit',(e)=>{
     e.preventDefault();
     const f = new FormData(e.target);
-    DATA.custos.push({id:uid('custo'), categoria:f.get('categoria'), valor:parseNum(f.get('valor')), data:f.get('data')||todayISO(), descricao:f.get('descricao')});
+    DATA.custos.push({id:uid('custo'), categoria:f.get('categoria'), tipo:'variavel', valor:parseNum(f.get('valor')), data:f.get('data')||todayISO(), descricao:f.get('descricao')});
     save(); closeModal(); renderMain();
   });
 }
@@ -1382,14 +1530,53 @@ function excluirCusto(id){
   if(!confirm('Excluir este lançamento de custo?')) return;
   DATA.custos = DATA.custos.filter(c=>c.id!==id); save(); renderMain();
 }
+function openCustoFixoModal(id){
+  const c = id ? DATA.custosFixos.find(x=>x.id===id) : null;
+  const root = document.getElementById('modalRoot');
+  root.innerHTML = `
+  <div class="modal-backdrop" onclick="if(event.target===this) closeModal()">
+    <div class="modal">
+      <div class="modal-head"><h2 style="margin:0;">${c?'Editar custo fixo':'Novo custo fixo'}</h2><button class="modal-close" onclick="closeModal()">✕</button></div>
+      <p class="stat-sub">Custos fixos são cadastrados uma vez e contam automaticamente em todos os meses, até você pausar ou excluir.</p>
+      <form id="custoFixoForm">
+        <div class="field"><label>Nome</label><input required name="nome" value="${esc(c?.nome||'')}" placeholder="Ex: Aluguel do ponto"></div>
+        <div class="rowline">
+          <div class="field"><label>Categoria</label><select name="categoria">${CATEGORIAS_CUSTO.map(cat=>`<option ${c?.categoria===cat?'selected':''}>${cat}</option>`).join('')}</select></div>
+          <div class="field"><label>Valor mensal (R$)</label><input required type="text" inputmode="decimal" name="valor" value="${c?.valor??''}"></div>
+        </div>
+        <label style="display:flex; align-items:center; gap:8px; font-size:13px; margin-top:4px;">
+          <input type="checkbox" name="ativo" ${c?.ativo!==false?'checked':''}> Ativo (continuar contando todo mês)
+        </label>
+        <div style="display:flex; justify-content:space-between; margin-top:18px;">
+          <div>${c? `<button type="button" class="btn danger sm" onclick="excluirCustoFixo('${c.id}')">Excluir</button>`:''}</div>
+          <div style="display:flex; gap:8px;">
+            <button type="button" class="btn ghost" onclick="closeModal()">Cancelar</button>
+            <button type="submit" class="btn gold">Salvar</button>
+          </div>
+        </div>
+      </form>
+    </div>
+  </div>`;
+  document.getElementById('custoFixoForm').addEventListener('submit',(e)=>{
+    e.preventDefault();
+    const f = new FormData(e.target);
+    const obj = {nome:f.get('nome').trim(), categoria:f.get('categoria'), valor:parseNum(f.get('valor')), ativo: f.get('ativo')==='on'};
+    if(!obj.nome) return;
+    if(c){ Object.assign(c, obj); } else { DATA.custosFixos.push({id:uid('fixo'), ...obj}); }
+    save(); closeModal(); renderMain();
+  });
+}
+function excluirCustoFixo(id){
+  if(!confirm('Excluir este custo fixo? Ele deixará de contar nos meses seguintes.')) return;
+  DATA.custosFixos = DATA.custosFixos.filter(c=>c.id!==id);
+  save(); closeModal(); renderMain();
+}
+
 
 /* ============================= RELATÓRIO / DRE ============================= */
 function renderRelatorio(){
-  const f = FILTERS.custos.period ? {period:'mes'} : {};
   const period = ROUTE.params.period || 'mes';
-  const vs = vendasNoPeriodo(period);
-  const cs = custosNoPeriodo(period);
-  const r = resumoFinanceiro(vs, cs);
+  const r = resumoCompleto(period);
   return `
   <div class="pagehead"><div><h1>Resultado do mês</h1><p>Uma DRE simplificada para acompanhar o negócio — não substitui a contabilidade oficial.</p></div>
     <button class="btn ghost" onclick="imprimirRelatorioMes('${period}')">Imprimir / salvar PDF</button>
@@ -1415,6 +1602,197 @@ function linha(label, val){
 }
 function linhaTotal(label, val, grand){
   return `<div class="totline ${grand?'grand':''}" style="border-top:1px solid var(--line); margin-top:6px; padding-top:8px; font-weight:700;"><span>${label}</span><span class="num ${val>=0?'pos':'neg'}">${brl(val)}</span></div>`;
+}
+
+/* ============================= CONCORRENTES ============================= */
+function renderConcorrentes(){
+  const busca = (ROUTE.params.busca||'').toLowerCase();
+  const lista = DATA.concorrentes.filter(c=>!busca || c.nome.toLowerCase().includes(busca)).sort((a,b)=>a.nome.localeCompare(b.nome));
+  return `
+  <div class="pagehead">
+    <div><h1>Concorrentes</h1><p>Cadastre concorrentes e os preços que eles praticam para comparar com os seus.</p></div>
+    <div style="display:flex; gap:8px; flex-wrap:wrap;">
+      <button class="btn ghost" onclick="go('comparativoConcorrencia')">Ver comparativo</button>
+      <button class="btn gold" onclick="openConcorrenteModal()">+ Novo concorrente</button>
+    </div>
+  </div>
+  <input class="field" style="max-width:280px; padding:9px 12px; border-radius:9px; border:1px solid var(--line); margin-bottom:16px;" placeholder="Buscar por nome..." value="${esc(ROUTE.params.busca||'')}" oninput="ROUTE.params.busca=this.value; renderMain();">
+  ${lista.length===0 ? `<div class="card empty"><div class="display">Nenhum concorrente cadastrado</div>Cadastre um concorrente e os itens/preços dele para começar a comparar.</div>` : `
+  <div class="card" style="padding:0; overflow:hidden;">
+    <table>
+      <thead><tr><th>Concorrente</th><th>Local</th><th class="num">Itens cadastrados</th><th></th></tr></thead>
+      <tbody>
+      ${lista.map(c=>{
+        const n = (c.itens||[]).length;
+        return `<tr class="rowlink" onclick="go('concorrenteDetalhe',{id:'${c.id}'})">
+          <td>${esc(c.nome)}</td>
+          <td>${esc(c.local||'—')}</td>
+          <td class="num">${n}</td>
+          <td></td>
+        </tr>`;
+      }).join('')}
+      </tbody>
+    </table>
+  </div>`}
+  `;
+}
+function openConcorrenteModal(id){
+  const c = id ? DATA.concorrentes.find(x=>x.id===id) : null;
+  const root = document.getElementById('modalRoot');
+  root.innerHTML = `
+  <div class="modal-backdrop" onclick="if(event.target===this) closeModal()">
+    <div class="modal">
+      <div class="modal-head"><h2 style="margin:0;">${c?'Editar concorrente':'Novo concorrente'}</h2><button class="modal-close" onclick="closeModal()">✕</button></div>
+      <form id="concorrenteForm">
+        <div class="field"><label>Nome do concorrente *</label><input required name="nome" value="${esc(c?.nome||'')}" placeholder="Ex: Salgados da Maria"></div>
+        <div class="field"><label>Local / bairro (opcional)</label><input name="local" value="${esc(c?.local||'')}" placeholder="Ex: Centro, iFood, feira..."></div>
+        <div class="field"><label>Observações</label><textarea name="obs" placeholder="Ex: Foco em festas, entrega só de bicicleta, qualidade mediana...">${esc(c?.obs||'')}</textarea></div>
+        <div style="display:flex; justify-content:space-between; margin-top:18px;">
+          <div>${c? `<button type="button" class="btn danger sm" onclick="excluirConcorrente('${c.id}')">Excluir</button>`:''}</div>
+          <div style="display:flex; gap:8px;">
+            <button type="button" class="btn ghost" onclick="closeModal()">Cancelar</button>
+            <button type="submit" class="btn gold">Salvar</button>
+          </div>
+        </div>
+      </form>
+    </div>
+  </div>`;
+  document.getElementById('concorrenteForm').addEventListener('submit',(e)=>{
+    e.preventDefault();
+    const f = new FormData(e.target);
+    const obj = {nome:f.get('nome').trim(), local:f.get('local').trim(), obs:f.get('obs').trim()};
+    if(!obj.nome) return;
+    if(c){ Object.assign(c, obj); } else { DATA.concorrentes.push({id:uid('conc'), itens:[], ...obj}); }
+    save(); closeModal(); renderMain();
+  });
+}
+function excluirConcorrente(id){
+  if(!confirm('Excluir este concorrente e todos os itens cadastrados dele?')) return;
+  DATA.concorrentes = DATA.concorrentes.filter(c=>c.id!==id);
+  save(); closeModal(); go('concorrentes');
+}
+function renderConcorrenteDetalhe(){
+  const c = DATA.concorrentes.find(x=>x.id===ROUTE.params.id);
+  if(!c) return `<div class="card empty">Concorrente não encontrado. <a href="#" onclick="go('concorrentes')">Voltar</a></div>`;
+  const itens = (c.itens||[]).slice().sort((a,b)=>a.nome.localeCompare(b.nome));
+  return `
+  <div class="pagehead">
+    <div><h1>${esc(c.nome)}</h1><p>${c.local?esc(c.local):'Sem local informado'}</p></div>
+    <div style="display:flex; gap:8px;">
+      <button class="btn ghost sm" onclick="openConcorrenteModal('${c.id}')">Editar</button>
+      <button class="btn gold sm" onclick="openConcorrenteItemModal('${c.id}')">+ Novo item</button>
+    </div>
+  </div>
+  ${c.obs? `<div class="card" style="margin-bottom:20px;"><div class="stat-label">Observações</div><div style="margin-top:6px; font-size:13.5px; white-space:pre-wrap;">${esc(c.obs)}</div></div>` : ''}
+  ${itens.length===0? `<div class="card empty">Nenhum item cadastrado ainda. Adicione os produtos e preços que esse concorrente pratica.</div>` : `
+  <div class="card" style="padding:0;">
+    <table>
+      <thead><tr><th>Item do concorrente</th><th class="num">Preço</th><th>Comparado com</th><th>Data</th><th></th></tr></thead>
+      <tbody>
+      ${itens.map(it=>{
+        const meu = DATA.produtos.find(p=>p.id===it.produtoId);
+        return `<tr>
+          <td>${esc(it.nome)}</td>
+          <td class="num">${brl(it.preco)}</td>
+          <td>${meu? esc(meu.nome) : '<span style="color:var(--umber-soft)">—</span>'}</td>
+          <td>${it.data?fmtDate(it.data):'—'}</td>
+          <td style="text-align:right;"><button class="btn ghost sm" onclick="openConcorrenteItemModal('${c.id}','${it.id}')">Editar</button></td>
+        </tr>`;
+      }).join('')}
+      </tbody>
+    </table>
+  </div>`}
+  `;
+}
+function openConcorrenteItemModal(concorrenteId, itemId){
+  const c = DATA.concorrentes.find(x=>x.id===concorrenteId); if(!c) return;
+  c.itens = c.itens || [];
+  const it = itemId ? c.itens.find(x=>x.id===itemId) : null;
+  const root = document.getElementById('modalRoot');
+  root.innerHTML = `
+  <div class="modal-backdrop" onclick="if(event.target===this) closeModal()">
+    <div class="modal">
+      <div class="modal-head"><h2 style="margin:0;">${it?'Editar item':'Novo item do concorrente'}</h2><button class="modal-close" onclick="closeModal()">✕</button></div>
+      <form id="concItemForm">
+        <div class="rowline">
+          <div class="field"><label>Nome do item *</label><input required name="nome" value="${esc(it?.nome||'')}" placeholder="Ex: Coxinha de frango"></div>
+          <div class="field"><label>Preço (R$)</label><input required type="text" inputmode="decimal" name="preco" value="${it?.preco??''}"></div>
+        </div>
+        <div class="rowline">
+          <div class="field"><label>Comparar com o seu produto (opcional)</label>
+            <select name="produtoId">
+              <option value="">Não comparar com nenhum</option>
+              ${DATA.produtos.map(p=>`<option value="${p.id}" ${it?.produtoId===p.id?'selected':''}>${esc(p.nome)}</option>`).join('')}
+            </select>
+          </div>
+          <div class="field"><label>Data da coleta do preço</label><input type="date" name="data" value="${it?.data||todayISO()}"></div>
+        </div>
+        <div class="field"><label>Observações</label><input name="obs" value="${esc(it?.obs||'')}" placeholder="Ex: visto no cardápio do iFood"></div>
+        <div style="display:flex; justify-content:space-between; margin-top:18px;">
+          <div>${it? `<button type="button" class="btn danger sm" onclick="excluirConcorrenteItem('${c.id}','${it.id}')">Excluir</button>`:''}</div>
+          <div style="display:flex; gap:8px;">
+            <button type="button" class="btn ghost" onclick="closeModal()">Cancelar</button>
+            <button type="submit" class="btn gold">Salvar</button>
+          </div>
+        </div>
+      </form>
+    </div>
+  </div>`;
+  document.getElementById('concItemForm').addEventListener('submit',(e)=>{
+    e.preventDefault();
+    const f = new FormData(e.target);
+    const obj = {nome:f.get('nome').trim(), preco:parseNum(f.get('preco')), produtoId:f.get('produtoId')||'', data:f.get('data')||todayISO(), obs:f.get('obs').trim()};
+    if(!obj.nome) return;
+    if(it){ Object.assign(it, obj); } else { c.itens.push({id:uid('concitem'), ...obj}); }
+    save(); closeModal(); go('concorrenteDetalhe',{id:c.id});
+  });
+}
+function excluirConcorrenteItem(concorrenteId, itemId){
+  const c = DATA.concorrentes.find(x=>x.id===concorrenteId); if(!c) return;
+  if(!confirm('Excluir este item?')) return;
+  c.itens = (c.itens||[]).filter(x=>x.id!==itemId);
+  save(); closeModal(); go('concorrenteDetalhe',{id:c.id});
+}
+function renderComparativoConcorrencia(){
+  const linhasPorProduto = {};
+  DATA.concorrentes.forEach(c=>{
+    (c.itens||[]).forEach(it=>{
+      if(!it.produtoId) return;
+      if(!linhasPorProduto[it.produtoId]) linhasPorProduto[it.produtoId] = [];
+      linhasPorProduto[it.produtoId].push({concorrente:c.nome, preco:parseNum(it.preco), data:it.data});
+    });
+  });
+  const produtosComparados = Object.keys(linhasPorProduto);
+  return `
+  <div class="pagehead"><div><h1>Comparativo com a concorrência</h1><p>Seu preço praticado contra o que os concorrentes cadastrados cobram pelo mesmo item.</p></div>
+    <button class="btn ghost" onclick="go('concorrentes')">Voltar</button>
+  </div>
+  ${produtosComparados.length===0 ? `<div class="card empty"><div class="display">Nenhuma comparação disponível ainda</div>Cadastre itens de concorrentes e vincule a um dos seus produtos para aparecer aqui.</div>` : `
+  <div class="card" style="padding:0;">
+    <table>
+      <thead><tr><th>Seu produto</th><th class="num">Seu preço</th><th>Concorrentes</th><th class="num">Média concorrência</th><th class="num">Diferença</th></tr></thead>
+      <tbody>
+      ${produtosComparados.map(pid=>{
+        const p = DATA.produtos.find(x=>x.id===pid);
+        if(!p) return '';
+        const meuPreco = (p.precoPraticado!==undefined && p.precoPraticado!=='' && p.precoPraticado!==null) ? parseNum(p.precoPraticado) : precoSugeridoProduto(p);
+        const concs = linhasPorProduto[pid];
+        const media = concs.reduce((s,c)=>s+c.preco,0)/concs.length;
+        const diff = meuPreco - media;
+        const diffPct = media>0 ? (diff/media*100) : 0;
+        return `<tr>
+          <td>${esc(p.nome)}</td>
+          <td class="num">${brl(meuPreco)}</td>
+          <td>${concs.map(c=>`${esc(c.concorrente)}: ${brl(c.preco)}`).join('<br>')}</td>
+          <td class="num">${brl(media)}</td>
+          <td class="num" style="font-weight:700; color:${diff>0?'var(--brick)':(diff<0?'var(--sage)':'var(--umber)')}">${diff>0?'+':''}${brl(diff)} (${diffPct>0?'+':''}${diffPct.toFixed(0)}%)</td>
+        </tr>`;
+      }).join('')}
+      </tbody>
+    </table>
+  </div>
+  <p class="stat-sub" style="margin-top:12px;">Diferença positiva = você está mais caro que a média da concorrência. Diferença negativa = você está mais barato.</p>`}
+  `;
 }
 
 /* ============================= RANKINGS ============================= */
@@ -1509,9 +1887,14 @@ function mountGraficos(){
   const labels = meses.map(m=>{ const [y,mm]=m.split('-'); return ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'][Number(mm)-1]+'/'+y.slice(2); });
   const fat=[], lucro=[], custo=[], pedidos=[];
   meses.forEach(mk=>{
+    const primeiroDia = mk+'-01';
+    const ultimoDia = mk+'-'+String(diasNoMesDe(primeiroDia)).padStart(2,'0');
     const vs = DATA.vendas.filter(v=>monthKey(v.data)===mk);
     const cs = DATA.custos.filter(c=>monthKey(c.data)===mk);
     const r = resumoFinanceiro(vs,cs);
+    r.custosFixos = fixosRecorrentesNoPeriodo(primeiroDia, ultimoDia);
+    r.custoTotal = r.custoProducao + r.custosVar + r.custosFixos + r.taxas;
+    r.lucro = r.receitaVendas - r.custoProducao - r.taxas - r.custosVar - r.custosFixos;
     fat.push(r.receitaVendas.toFixed(2)); lucro.push(r.lucro.toFixed(2)); custo.push(r.custoTotal.toFixed(2)); pedidos.push(r.pedidos);
   });
   const gold = '#D9A441', sage='#5C7A4B', brick='#C1443B', umber='#2E2117';
@@ -1531,6 +1914,88 @@ function mountGraficos(){
 }
 
 /* ============================= BACKUP ============================= */
+/* ============================= PLANILHAS (EXCEL) ============================= */
+function renderPlanilhas(){
+  return `
+  <div class="pagehead"><div><h1>Planilhas</h1><p>Modelos prontos para baixar em Excel ou imprimir direto em PDF — sem precisar de nenhum programa extra.</p></div></div>
+  <div class="grid cols-2">
+    <div class="card">
+      <div class="stat-label">Controle de caixa</div>
+      <p class="stat-sub" style="margin:8px 0 14px;">Modelo de 5 semanas: dia da semana, abertura, dinheiro, cartão, PIX, total vendido e fechamento — com a diferença calculada automaticamente na versão Excel.</p>
+      <div style="display:flex; gap:8px; flex-wrap:wrap;">
+        <button class="btn gold" onclick="baixarPlanilhaCaixa()">Baixar Excel (.xlsx)</button>
+        <button class="btn ghost" onclick="imprimirControleCaixa()">Imprimir / salvar em PDF</button>
+      </div>
+    </div>
+    <div class="card">
+      <div class="stat-label">Controle de estoque</div>
+      <p class="stat-sub" style="margin:8px 0 14px;">Já vem com os produtos e insumos que você tem cadastrados, com o estoque atual do sistema e uma coluna para a contagem manual.</p>
+      <div style="display:flex; gap:8px; flex-wrap:wrap;">
+        <button class="btn gold" onclick="baixarPlanilhaEstoque()">Baixar Excel (.xlsx)</button>
+        <button class="btn ghost" onclick="imprimirFichaContagem()">Imprimir / salvar em PDF</button>
+      </div>
+    </div>
+  </div>
+  <p class="stat-sub" style="margin-top:18px;">Não tem Excel? Use "Imprimir / salvar em PDF" — abre a tela de impressão do navegador, e você escolhe "Salvar como PDF" em vez de uma impressora. Funciona em qualquer celular ou computador, sem instalar nada.</p>
+  `;
+}
+function imprimirControleCaixa(){
+  const dias = ['Segunda-feira','Terça-feira','Quarta-feira','Quinta-feira','Sexta-feira','Sábado','Domingo'];
+  const colunas = 9; // Data, Abertura, Dinheiro, Cartão, PIX, Outros, Total vendido, Fechamento, Diferença
+  const linhaVazia = '<td style="border-bottom:1px solid #ddd; padding:8px 4px;">&nbsp;</td>'.repeat(colunas);
+  const linhas = dias.map(d=>`<tr><td style="padding:8px 6px; border-bottom:1px solid #ddd; white-space:nowrap;">${d}</td>${linhaVazia}</tr>`).join('');
+  const cabecalhos = ['Dia','Data','Abertura','Dinheiro','Cartão','PIX','Outros','Total vendido','Fechamento','Diferença'];
+  const html = `
+    <p style="font-size:12.5px; color:#6b5c4a;">Semana de ____/____/______ a ____/____/______</p>
+    <table style="width:100%; border-collapse:collapse; font-size:11.5px;">
+      <thead><tr>${cabecalhos.map(c=>`<th style="text-align:left; border-bottom:1px solid #333; padding:6px 4px;">${c}</th>`).join('')}</tr></thead>
+      <tbody>${linhas}</tbody>
+    </table>
+    <p style="font-size:11px; color:#6b5c4a; margin-top:14px;">Total vendido = Dinheiro + Cartão + PIX + Outros. &nbsp; Diferença = Fechamento − (Abertura + Total vendido).</p>
+  `;
+  imprimirBloco('Controle de caixa semanal', html);
+}
+function baixarPlanilhaCaixa(){
+  if(typeof XLSX==='undefined'){ alert('Não foi possível carregar a ferramenta de planilha agora. Verifique sua internet e tente de novo.'); return; }
+  const dias = ['Segunda-feira','Terça-feira','Quarta-feira','Quinta-feira','Sexta-feira','Sábado','Domingo'];
+  const header = ['Dia da semana','Data','Abertura de caixa','Dinheiro','Cartão','PIX','Outros','Total vendido','Fechamento (contado)','Diferença'];
+  const aoa = [header];
+  for(let s=0; s<5; s++){ dias.forEach(d=> aoa.push([d,'','','','','','','','',''])); }
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  for(let r=2; r<=aoa.length; r++){
+    ws['H'+r] = {t:'n', f:`D${r}+E${r}+F${r}+G${r}`};
+    ws['J'+r] = {t:'n', f:`I${r}-(C${r}+H${r})`};
+  }
+  ws['!cols'] = [{wch:14},{wch:12},{wch:14},{wch:12},{wch:12},{wch:10},{wch:12},{wch:14},{wch:18},{wch:12}];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Controle de Caixa');
+  XLSX.writeFile(wb, `controle-de-caixa-${slug(nomeNegocio())}.xlsx`);
+}
+function baixarPlanilhaEstoque(){
+  if(typeof XLSX==='undefined'){ alert('Não foi possível carregar a ferramenta de planilha agora. Verifique sua internet e tente de novo.'); return; }
+  const hoje = fmtDate(todayISO());
+  const headerP = ['Produto','Unidade','Estoque no sistema ('+hoje+')','Contagem manual','Diferença','Data da contagem'];
+  const aoaP = [headerP];
+  DATA.produtos.forEach(p=> aoaP.push([p.nome, 'un.', Number(p.estoqueAtual)||0, '', '', '']));
+  if(DATA.produtos.length===0) aoaP.push(['(cadastre produtos em Precificação)', '', '', '', '', '']);
+  const wsP = XLSX.utils.aoa_to_sheet(aoaP);
+  for(let r=2; r<=aoaP.length; r++){ if(DATA.produtos.length) wsP['E'+r] = {t:'n', f:`D${r}-C${r}`}; }
+  wsP['!cols'] = [{wch:26},{wch:10},{wch:24},{wch:16},{wch:12},{wch:16}];
+
+  const headerI = ['Insumo','Unidade','Estoque no sistema ('+hoje+')','Contagem manual','Diferença','Data da contagem'];
+  const aoaI = [headerI];
+  DATA.ingredientes.forEach(i=> aoaI.push([i.nome, i.unidade, Number(i.estoqueAtual)||0, '', '', '']));
+  if(DATA.ingredientes.length===0) aoaI.push(['(cadastre insumos em Precificação)', '', '', '', '', '']);
+  const wsI = XLSX.utils.aoa_to_sheet(aoaI);
+  for(let r=2; r<=aoaI.length; r++){ if(DATA.ingredientes.length) wsI['E'+r] = {t:'n', f:`D${r}-C${r}`}; }
+  wsI['!cols'] = [{wch:26},{wch:10},{wch:24},{wch:16},{wch:12},{wch:16}];
+
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, wsP, 'Produtos');
+  XLSX.utils.book_append_sheet(wb, wsI, 'Materia-prima');
+  XLSX.writeFile(wb, `controle-de-estoque-${slug(nomeNegocio())}.xlsx`);
+}
+
 function renderBackup(){
   return `
   <div class="pagehead"><div><h1>Backup</h1><p>Exporte tudo para um arquivo seguro ou restaure a partir de um backup anterior.</p></div></div>
@@ -1622,8 +2087,7 @@ function imprimirBloco(titulo, htmlInterno){
   window.print();
 }
 function imprimirRelatorioMes(period){
-  const vs = vendasNoPeriodo(period); const cs = custosNoPeriodo(period);
-  const r = resumoFinanceiro(vs, cs);
+  const r = resumoCompleto(period);
   const html = `
     <table style="width:100%; border-collapse:collapse; font-size:13.5px; max-width:480px;">
       ${[['Faturamento bruto', r.faturamento],['− Descontos', -r.descontos],['= Receita de vendas', r.receitaVendas],
@@ -1676,6 +2140,164 @@ function imprimirEstoque(){
     </table>`;
   imprimirBloco('Posição de estoque', html);
 }
+function blocoProdutoPrecificacaoHTML(p){
+  const th = (t,num)=>`<th style="text-align:${num?'right':'left'}; border-bottom:1px solid #333; padding:6px;">${t}</th>`;
+  const td = (v,num)=>`<td style="text-align:${num?'right':'left'}; padding:6px; border-bottom:1px solid #ddd;">${v}</td>`;
+  const itens = (p.itens||[]).map(it=>{
+    const ing = DATA.ingredientes.find(x=>x.id===it.ingredienteId);
+    if(!ing) return null;
+    const custoItem = custoUnidadeBaseIngrediente(ing)*parseNum(it.quantidade);
+    return `<tr>${td(esc(ing.nome))}${td(parseNum(it.quantidade)+' '+ing.unidade,1)}${td(brl(custoUnidadeBaseIngrediente(ing))+'/'+ing.unidade,1)}${td(brl(custoItem),1)}</tr>`;
+  }).filter(Boolean).join('');
+  const custoIngredientesTotal = custoIngredientesProduto(p);
+  const custoIngredientesUnit = custoIngredientesTotal/(parseNum(p.rendimento)||1);
+  const custo = custoUnitarioProduto(p);
+  const sugerido = precoSugeridoProduto(p);
+  const praticado = (p.precoPraticado!==undefined && p.precoPraticado!=='' && p.precoPraticado!==null) ? parseNum(p.precoPraticado) : sugerido;
+  return `
+  <div style="page-break-inside:avoid; margin-bottom:22px; border:1px solid #ddd; border-radius:8px; padding:14px 16px;">
+    <h4 style="margin:0 0 8px; font-family:'Fraunces',serif; font-size:15px;">${esc(p.nome)}</h4>
+    <p style="font-size:12px; color:#6b5c4a; margin:0 0 10px;">Rendimento da receita: ${p.rendimento} unidade(s)</p>
+    <table style="width:100%; border-collapse:collapse; font-size:12px;">
+      <thead><tr>${th('Insumo usado')}${th('Quantidade',1)}${th('Custo unidade',1)}${th('Custo no lote',1)}</tr></thead>
+      <tbody>${itens || `<tr><td colspan="4" style="padding:6px; color:#888;">Sem insumos cadastrados.</td></tr>`}</tbody>
+    </table>
+    <table style="width:100%; border-collapse:collapse; font-size:12.5px; margin-top:10px; max-width:420px;">
+      <tbody>
+        <tr>${td('Custo de insumos por unidade')}${td(brl(custoIngredientesUnit),1)}</tr>
+        <tr>${td('Embalagem (por unidade)')}${td(brl(p.embalagem||0),1)}</tr>
+        <tr>${td('Mão de obra (por unidade)')}${td(brl(p.maoDeObra||0),1)}</tr>
+        <tr>${td('Outros custos (por unidade)')}${td(brl(p.outros||0),1)}</tr>
+        <tr style="font-weight:700;">${td('= Custo unitário total')}${td(brl(custo),1)}</tr>
+        <tr>${td('Margem de lucro aplicada')}${td((parseNum(p.margem)||0)+'%',1)}</tr>
+        <tr style="font-weight:700;">${td('= Preço sugerido')}${td(brl(sugerido),1)}</tr>
+        <tr style="font-weight:700; color:#166534;">${td('Preço praticado')}${td(brl(praticado),1)}</tr>
+      </tbody>
+    </table>
+  </div>`;
+}
+function imprimirPrecificacaoProduto(id){
+  const p = DATA.produtos.find(x=>x.id===id); if(!p) return;
+  imprimirBloco('Precificação — '+p.nome, blocoProdutoPrecificacaoHTML(p));
+}
+
+/* ============================= INFORMAÇÃO NUTRICIONAL (IMPRESSÃO) ============================= */
+function nutrientesLista(p){
+  return [
+    {label:'Valor energético', valor:p.nutriEnergia, unidade:'kcal'},
+    {label:'Carboidratos', valor:p.nutriCarboidratos, unidade:'g'},
+    {label:'Açúcares totais', valor:p.nutriAcucaresTotais, unidade:'g', indent:true},
+    {label:'Açúcares adicionados', valor:p.nutriAcucaresAdicionados, unidade:'g', indent:true},
+    {label:'Proteínas', valor:p.nutriProteinas, unidade:'g'},
+    {label:'Gorduras totais', valor:p.nutriGordurasTotais, unidade:'g'},
+    {label:'Gorduras saturadas', valor:p.nutriGordurasSaturadas, unidade:'g', indent:true},
+    {label:'Gorduras trans', valor:p.nutriGordurasTrans, unidade:'g', indent:true},
+    {label:'Fibra alimentar', valor:p.nutriFibra, unidade:'g'},
+    {label:'Sódio', valor:p.nutriSodio, unidade:'mg'},
+  ];
+}
+function imprimirTabelaNutricionalPadrao(p){
+  if(!p || !p.nome){ alert('Salve o produto antes de imprimir.'); return; }
+  const linhas = nutrientesLista(p).map(n=>`
+    <tr>
+      <td style="padding:3px 0; ${n.indent?'padding-left:10px; color:#333;':'font-weight:600;'}">${n.label}</td>
+      <td style="padding:3px 0; text-align:right;">${n.valor!==undefined && n.valor!=='' ? parseNum(n.valor).toLocaleString('pt-BR') : '—'}${n.valor!==undefined && n.valor!==''?' '+n.unidade:''}</td>
+    </tr>`).join('');
+  const html = `
+    <div style="width:78mm; border:2px solid #000; padding:8px 10px; font-family:Arial,Helvetica,sans-serif; color:#000;">
+      <div style="font-size:15px; font-weight:800; border-bottom:8px solid #000; padding-bottom:3px;">INFORMAÇÃO NUTRICIONAL</div>
+      <div style="font-size:11px; padding:4px 0; border-bottom:1px solid #000;">
+        Porção: ${esc(p.nutriPorcao || '—')}${p.nutriPorcoesEmbalagem ? ` &nbsp;•&nbsp; Porções por embalagem: ${esc(p.nutriPorcoesEmbalagem)}` : ''}
+      </div>
+      <table style="width:100%; border-collapse:collapse; font-size:11.5px; margin-top:4px;">
+        <thead><tr style="border-bottom:1px solid #000;"><th style="text-align:left; padding:2px 0;">Quantidade por porção</th><th></th></tr></thead>
+        <tbody>${linhas}</tbody>
+      </table>
+      <div style="border-top:4px solid #000; margin-top:4px; padding-top:5px; font-size:9px; line-height:1.4;">
+        *Este rótulo não declara %VD por não ter valores de referência inseridos. Valores nutricionais informados pelo responsável do produto — não calculados automaticamente pelo aplicativo.
+      </div>
+    </div>`;
+  imprimirBloco('Tabela nutricional — '+p.nome, html);
+}
+function imprimirEtiquetaNutricional(p){
+  if(!p || !p.nome){ alert('Salve o produto antes de imprimir.'); return; }
+  const linhasCompactas = nutrientesLista(p).filter(n=>n.valor!==undefined && n.valor!=='').map(n=>
+    `<div style="display:flex; justify-content:space-between; font-size:9.5px; padding:1.5px 0; ${n.indent?'padding-left:8px; color:#5A4B3D;':''}">
+      <span>${n.label}</span><span>${parseNum(n.valor).toLocaleString('pt-BR')}${n.unidade}</span>
+    </div>`).join('');
+  const html = `
+    <div style="width:64mm; border:1.5px solid #D9A441; border-radius:14px; padding:10px 12px; font-family:'Inter',Arial,sans-serif; color:#2E2117; background:#FFFCF6;">
+      <div style="display:flex; align-items:center; gap:8px; margin-bottom:4px;">
+        <div style="width:26px; height:26px; border-radius:8px; background:#D9A441; color:#2E2117; display:flex; align-items:center; justify-content:center; font-family:'Fraunces',serif; font-weight:700; font-size:12px;">${esc(iniciaisNegocio())}</div>
+        <div style="font-family:'Fraunces',serif; font-weight:700; font-size:12px; line-height:1.1;">${esc(nomeNegocio())}</div>
+      </div>
+      <div style="font-weight:700; font-size:13px; margin:6px 0 2px;">${esc(p.nome)}</div>
+      <div style="font-size:9.5px; color:#5A4B3D; margin-bottom:6px;">Porção: ${esc(p.nutriPorcao || '—')}</div>
+      <div style="border-top:1px dashed #D9A441; margin:4px 0;"></div>
+      ${linhasCompactas || `<div style="font-size:9.5px; color:#8B7A63;">Informação nutricional não preenchida.</div>`}
+      <div style="border-top:1px dashed #D9A441; margin:6px 0 4px;"></div>
+      <div style="font-size:8px; color:#8B7A63; line-height:1.3;">Valores informados pelo responsável do produto.${p.conservacao?' '+esc(p.conservacao)+'.':''}</div>
+    </div>`;
+  imprimirBloco('Etiqueta — '+p.nome, html);
+}
+
+function imprimirFichaTecnica(id, mostrarCusto){
+  const p = DATA.produtos.find(x=>x.id===id); if(!p) return;
+  const th = (t,num)=>`<th style="text-align:${num?'right':'left'}; border-bottom:1px solid #333; padding:6px;">${t}</th>`;
+  const td = (v,num)=>`<td style="text-align:${num?'right':'left'}; padding:6px; border-bottom:1px solid #ddd;">${v}</td>`;
+  const ingredientesLinhas = (p.itens||[]).map(it=>{
+    const ing = DATA.ingredientes.find(x=>x.id===it.ingredienteId);
+    if(!ing) return null;
+    return `<tr>${td(esc(ing.nome))}${td(parseNum(it.quantidade)+' '+ing.unidade,1)}</tr>`;
+  }).filter(Boolean).join('');
+  const passos = (p.modoPreparo||'').split('\n').map(s=>s.trim()).filter(Boolean);
+  const passosHtml = passos.length
+    ? `<ol style="padding-left:18px; font-size:13px; line-height:1.7;">${passos.map(s=>`<li>${esc(s.replace(/^\d+[\.\)]\s*/,''))}</li>`).join('')}</ol>`
+    : `<p style="color:#888; font-size:12.5px;">Modo de preparo não cadastrado — edite o produto em Precificação para adicionar.</p>`;
+  const custoBloco = mostrarCusto ? `
+    <h3 style="margin:18px 0 6px;">Informações de custo (uso interno)</h3>
+    <table style="width:100%; border-collapse:collapse; font-size:12.5px; max-width:380px;">
+      <tbody>
+        <tr>${td('Custo unitário')}${td(brl(custoUnitarioProduto(p)),1)}</tr>
+        <tr>${td('Margem aplicada')}${td((parseNum(p.margem)||0)+'%',1)}</tr>
+        <tr>${td('Preço praticado')}${td(brl((p.precoPraticado!==undefined && p.precoPraticado!=='' && p.precoPraticado!==null) ? parseNum(p.precoPraticado) : precoSugeridoProduto(p)),1)}</tr>
+      </tbody>
+    </table>` : '';
+  const html = `
+    <h3 style="margin:14px 0 2px; font-family:'Fraunces',serif;">${esc(p.nome)}</h3>
+    <p style="font-size:12.5px; color:#6b5c4a; margin:0 0 14px;">
+      Rendimento: ${p.rendimento} unidade(s) ${p.tempoPreparo? ' &nbsp;•&nbsp; Tempo de preparo: '+esc(p.tempoPreparo) : ''}
+    </p>
+    <h4 style="margin:16px 0 6px;">Ingredientes</h4>
+    <table style="width:100%; border-collapse:collapse; font-size:13px;">
+      <thead><tr>${th('Ingrediente')}${th('Quantidade',1)}</tr></thead>
+      <tbody>${ingredientesLinhas || `<tr><td colspan="2" style="padding:6px; color:#888;">Sem ingredientes cadastrados.</td></tr>`}</tbody>
+    </table>
+    <h4 style="margin:18px 0 6px;">Modo de preparo</h4>
+    ${passosHtml}
+    ${p.conservacao? `<h4 style="margin:18px 0 6px;">Conservação</h4><p style="font-size:13px;">${esc(p.conservacao)}</p>` : ''}
+    ${custoBloco}
+  `;
+  imprimirBloco('Ficha técnica — '+p.nome, html);
+}
+function imprimirPrecificacao(){
+  const th = (t,num)=>`<th style="text-align:${num?'right':'left'}; border-bottom:1px solid #333; padding:6px;">${t}</th>`;
+  const td = (v,num)=>`<td style="text-align:${num?'right':'left'}; padding:6px; border-bottom:1px solid #ddd;">${v}</td>`;
+
+  const ingHtml = `
+    <h3 style="margin:14px 0 6px;">Insumos (ingredientes)</h3>
+    <table style="width:100%; border-collapse:collapse; font-size:12.5px;">
+      <thead><tr>${th('Insumo')}${th('Comprado',1)}${th('Preço pago',1)}${th('Custo por unidade',1)}${th('Validade')}</tr></thead>
+      <tbody>${DATA.ingredientes.map(i=>`<tr>
+        ${td(esc(i.nome))}${td(i.quantidade+' '+i.unidade,1)}${td(brl(i.precoCompra),1)}${td(brl(custoUnidadeBaseIngrediente(i))+'/'+i.unidade,1)}${td(i.validade?fmtDate(i.validade):'—')}
+      </tr>`).join('') || `<tr><td colspan="5" style="padding:8px; color:#888;">Nenhum insumo cadastrado.</td></tr>`}</tbody>
+    </table>`;
+
+  const produtosHtml = DATA.produtos.map(p=>blocoProdutoPrecificacaoHTML(p)).join('') || `<p style="color:#888;">Nenhum produto cadastrado.</p>`;
+
+  const html = `${ingHtml}<h3 style="margin:26px 0 10px;">Produtos — composição e formação de preço</h3>${produtosHtml}`;
+  imprimirBloco('Precificação detalhada', html);
+}
 
 /* ============================= MÁSCARAS E SUGESTÕES DE CAMPO ============================= */
 function maskTelefone(v){
@@ -1717,8 +2339,12 @@ function renderMain(){
     case 'custos': html = renderCustos(); break;
     case 'relatorio': html = renderRelatorio(); break;
     case 'rankings': html = renderRankings(); break;
+    case 'concorrentes': html = renderConcorrentes(); break;
+    case 'concorrenteDetalhe': html = renderConcorrenteDetalhe(); break;
+    case 'comparativoConcorrencia': html = renderComparativoConcorrencia(); break;
     case 'graficos': html = renderGraficos(); break;
     case 'backup': html = renderBackup(); break;
+    case 'planilhas': html = renderPlanilhas(); break;
     case 'estoque': html = renderEstoque(); break;
     case 'config': html = renderConfig(); break;
     default: html = renderDashboard();
