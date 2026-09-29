@@ -233,11 +233,30 @@
   @media print{
     #sidebar, .pagehead, .no-print, .mobile-menu-overlay, .mobile-menu-btn{ display:none !important; }
     #main{ padding:0; max-width:none; }
-    body{ background:#fff; }
+    body{ background:#fff; zoom:1 !important; }
     #printarea{ display:block !important; }
   }
   #printarea{ display:none; }
+
+  /* Acessibilidade: alto contraste */
+  body.alto-contraste{ --cream:#FFFFFF; --paper:#FFFFFF; --umber:#000000; --umber-soft:#000000; --line:#000000; }
+  body.alto-contraste .card{ border:2px solid #000; box-shadow:none; }
+  body.alto-contraste table th{ border-bottom:2px solid #000; }
+  body.alto-contraste table td{ border-bottom:1.5px solid #000; }
+  body.alto-contraste .field input, body.alto-contraste .field select, body.alto-contraste .field textarea{ border:2px solid #000; }
+  body.alto-contraste ::placeholder{ color:#3a3a3a; }
+  body.alto-contraste .btn.ghost{ border:2px solid #000; color:#000; }
+  body.alto-contraste .stat-sub{ color:#000; }
 </style>
+<script>
+  function aplicarAcessibilidade(){
+    try{
+      const escalas = {normal:1, grande:1.2, extra:1.45};
+      document.body.style.zoom = escalas[(DATA.config && DATA.config.tamanhoTexto) || 'normal'] || 1;
+      document.body.classList.toggle('alto-contraste', !!(DATA.config && DATA.config.altoContraste));
+    }catch(e){ /* DATA ainda não carregado */ }
+  }
+</script>
 </head>
 <body>
 <div id="app">
@@ -327,6 +346,8 @@ function ensureShape(){
   DATA.config = DATA.config || {};
   DATA.config.moeda = DATA.config.moeda || 'BRL';
   DATA.config.idioma = DATA.config.idioma || 'pt';
+  DATA.config.tamanhoTexto = DATA.config.tamanhoTexto || 'normal';
+  DATA.config.altoContraste = DATA.config.altoContraste===undefined ? false : DATA.config.altoContraste;
   if(DATA.config.nomeNegocio===undefined) DATA.config.nomeNegocio = 'Jack Salgadinhos';
   DATA.ingredientes.forEach(i=>{ if(i.estoqueAtual===undefined) i.estoqueAtual=0; if(i.estoqueMinimo===undefined) i.estoqueMinimo=0; });
   DATA.produtos.forEach(p=>{ if(p.estoqueAtual===undefined) p.estoqueAtual=0; if(p.estoqueMinimo===undefined) p.estoqueMinimo=0; });
@@ -2073,6 +2094,27 @@ function renderConfig(){
       </select>
     </div>
   </div>
+  <div class="card" style="margin-top:16px;">
+    <div class="stat-label">Acessibilidade</div>
+    <p class="stat-sub" style="margin:8px 0 14px;">Deixa o aplicativo mais fácil de enxergar e usar.</p>
+    <div class="rowline">
+      <div>
+        <label style="display:block; font-size:12.5px; font-weight:600; color:var(--umber-soft); margin-bottom:6px;">Tamanho do texto</label>
+        <div class="tabs" style="margin-bottom:0;">
+          <button class="tabbtn ${(DATA.config.tamanhoTexto||'normal')==='normal'?'active':''}" onclick="DATA.config.tamanhoTexto='normal'; save(); aplicarAcessibilidade(); renderMain();">Normal</button>
+          <button class="tabbtn ${DATA.config.tamanhoTexto==='grande'?'active':''}" onclick="DATA.config.tamanhoTexto='grande'; save(); aplicarAcessibilidade(); renderMain();">Grande</button>
+          <button class="tabbtn ${DATA.config.tamanhoTexto==='extra'?'active':''}" onclick="DATA.config.tamanhoTexto='extra'; save(); aplicarAcessibilidade(); renderMain();">Extra grande</button>
+        </div>
+      </div>
+      <div>
+        <label style="display:block; font-size:12.5px; font-weight:600; color:var(--umber-soft); margin-bottom:6px;">Alto contraste</label>
+        <label style="display:flex; align-items:center; gap:8px; font-size:13.5px; margin-top:8px;">
+          <input type="checkbox" ${DATA.config.altoContraste?'checked':''} onchange="DATA.config.altoContraste=this.checked; save(); aplicarAcessibilidade();"> Ativar (texto preto sobre fundo branco, bordas mais fortes)
+        </label>
+      </div>
+    </div>
+    <p class="stat-sub" style="margin-top:14px;">O tamanho do texto aumenta tudo na tela — letras, botões e ícones — igual ao zoom do navegador. Funciona no Chrome, Edge e Samsung Internet (a maioria dos celulares Android); em alguns navegadores diferentes pode não ter efeito.</p>
+  </div>
   `;
 }
 
@@ -2398,6 +2440,7 @@ function setupPWA(){
 (function init(){
   loadData();
   setupPWA();
+  aplicarAcessibilidade();
   render();
 })();
 </script>
