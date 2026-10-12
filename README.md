@@ -4,7 +4,7 @@
 
 🔗 **Demo ao vivo:** https://eduardoagram-br.github.io/Gestaoempresarial/
 📦 **Repositório:** `eduardoagram-Br/Gestaoempresarial`
-👨‍💻 **Autor:** Eduardo Agra Messas - Eng. de Produção | Pós em Eng. de Segurança do Trabalho | Niterói - RJ
+👨‍💻 **Autor:** Eduardo Agra Messas - Eng. de Produção | Pós em Eng. de Segurança do Trabalho | Pós em eng. Ambiental| Niterói - RJ
 
 ---
 
